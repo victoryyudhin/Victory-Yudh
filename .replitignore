@@ -3,3 +3,7 @@
 
 # No need to store the pnpm store twice.
 .local
+artifacts/victory-yudh/.env
+artifacts/victory-yudh/var
+artifacts/victory-yudh/public/uploads
+artifacts/victory-yudh/vendor

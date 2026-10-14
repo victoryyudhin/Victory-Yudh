@@ -47,3 +47,9 @@ Thumbs.db
 # Replit
 .cache/
 .local/
+
+# Victory Yudh local environment and database
+artifacts/victory-yudh/.env
+artifacts/victory-yudh/var/
+artifacts/victory-yudh/public/uploads/
+artifacts/victory-yudh/vendor/
