@@ -34,11 +34,16 @@ function csrf_field(): string
 function verify_csrf(): void
 {
     $sent = $_POST['_csrf'] ?? '';
-    if (!is_string($sent) || !hash_equals(csrf_token(), $sent)) {
+    if (!csrf_is_valid($sent)) {
         http_response_code(419);
         render_error_page(419, 'This form expired. Refresh the page and try again.');
         exit;
     }
+}
+
+function csrf_is_valid(mixed $sent): bool
+{
+    return is_string($sent) && hash_equals(csrf_token(), $sent);
 }
 
 function is_post(): bool
@@ -99,12 +104,17 @@ function require_auth(): array
 function require_admin(): array
 {
     $user = require_auth();
-    if ($user['role'] !== 'admin') {
+    if (!has_admin_role($user)) {
         http_response_code(403);
         render_error_page(403, 'You do not have permission to view this page.');
         exit;
     }
     return $user;
+}
+
+function has_admin_role(?array $user): bool
+{
+    return $user !== null && ($user['role'] ?? null) === 'admin' && ($user['status'] ?? 'active') === 'active';
 }
 
 function notify_user(int $userId, string $type, string $title, string $body, ?string $target = null): void
@@ -187,6 +197,12 @@ function format_money(int|string $minor): string
     $negative = $amount < 0;
     $amount = abs($amount);
     return ($negative ? '−' : '') . '₹' . number_format(intdiv($amount, 100)) . '.' . str_pad((string) ($amount % 100), 2, '0', STR_PAD_LEFT);
+}
+
+function format_money_input(int|string $minor): string
+{
+    $amount = max(0, (int) $minor);
+    return intdiv($amount, 100) . '.' . str_pad((string) ($amount % 100), 2, '0', STR_PAD_LEFT);
 }
 
 function post_string(string $key, int $maxLength = 255, bool $required = false): string

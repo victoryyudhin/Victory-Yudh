@@ -66,6 +66,19 @@ final class WalletService
         if (!$account) {
             throw new RuntimeException('Wallet account could not be loaded.');
         }
+        // Re-read after the account lock with a locking read: another request
+        // may have posted this same idempotency key while this request waited.
+        $stmt = $db->prepare('SELECT * FROM wallet_transactions WHERE idempotency_key=? FOR UPDATE');
+        $stmt->execute([$idempotencyKey]);
+        $existing = $stmt->fetch();
+        if ($existing) {
+            if ((int) $existing['user_id'] !== $userId
+                || $existing['transaction_type'] !== $type
+                || (int) $existing['amount_minor'] !== $amountMinor) {
+                throw new DomainException('This wallet transaction key was already used for a different transaction.');
+            }
+            return $existing;
+        }
 
         $availableBefore = (int) $account['balance_minor'];
         $reservedBefore = (int) $account['reserved_minor'];

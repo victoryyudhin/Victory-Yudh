@@ -1,6 +1,11 @@
 SET NAMES utf8mb4;
 SET time_zone = '+00:00';
 
+CREATE TABLE IF NOT EXISTS schema_migrations (
+  version VARCHAR(120) NOT NULL PRIMARY KEY,
+  applied_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 CREATE TABLE IF NOT EXISTS users (
   id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
   email VARCHAR(254) NOT NULL,
@@ -376,3 +381,5 @@ CREATE TABLE IF NOT EXISTS rate_limits (
 INSERT IGNORE INTO settings (setting_key, setting_value) VALUES
   ('min_withdrawal_minor', '10000'),
   ('max_withdrawal_minor', '5000000');
+
+INSERT IGNORE INTO schema_migrations (version) VALUES ('001_initial');

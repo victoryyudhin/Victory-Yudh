@@ -51,7 +51,7 @@ function config(string $key, mixed $default = null): mixed
 function app_key(): string
 {
     $key = (string) (config('app_key') ?: getenv('SESSION_SECRET') ?: '');
-    if (strlen($key) < 32) {
+    if (strlen($key) < 32 || preg_match('/^(replace-with|change-me|example|changeme)/i', $key) === 1) {
         if (config('app_env', 'production') === 'production') {
             throw new RuntimeException('App security key is missing. Configure APP_KEY or SESSION_SECRET.');
         }

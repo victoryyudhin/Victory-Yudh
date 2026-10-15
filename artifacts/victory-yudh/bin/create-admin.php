@@ -51,18 +51,26 @@ try {
         throw new InvalidArgumentException('Passwords must match and be at least 16 characters.');
     }
 
-    $db->beginTransaction();
-    $check = $db->query("SELECT COUNT(*) FROM users WHERE role='admin' FOR UPDATE");
-    if ((int) $check->fetchColumn() > 0) {
-        throw new RuntimeException('An administrator was created concurrently. No account was changed.');
+    if ((int) $db->query("SELECT GET_LOCK('victory_yudh_initial_admin_setup', 10)")->fetchColumn() !== 1) {
+        throw new RuntimeException('Could not safely acquire the one-time admin setup lock.');
     }
-    $stmt = $db->prepare("INSERT INTO users (email, password_hash, role) VALUES (?,?, 'admin')");
-    $stmt->execute([$email, password_hash($password, PASSWORD_DEFAULT)]);
-    $userId = (int) $db->lastInsertId();
-    $db->prepare('INSERT INTO profiles (user_id, display_name) VALUES (?,?)')->execute([$userId, $displayName]);
-    $db->prepare('INSERT INTO wallet_accounts (user_id) VALUES (?)')->execute([$userId]);
-    $db->commit();
-    fwrite(STDOUT, "Administrator account created. Sign in using the email you entered.\n");
+    try {
+        $db->beginTransaction();
+        $check = $db->query("SELECT COUNT(*) FROM users WHERE role='admin'");
+        if ((int) $check->fetchColumn() > 0) {
+            throw new RuntimeException('An administrator was created concurrently. No account was changed.');
+        }
+        $stmt = $db->prepare("INSERT INTO users (email, password_hash, role) VALUES (?,?, 'admin')");
+        $stmt->execute([$email, password_hash($password, PASSWORD_DEFAULT)]);
+        $userId = (int) $db->lastInsertId();
+        $db->prepare('INSERT INTO profiles (user_id, display_name) VALUES (?,?)')->execute([$userId, $displayName]);
+        $db->prepare('INSERT INTO wallet_accounts (user_id) VALUES (?)')->execute([$userId]);
+        audit_log($userId, 'admin.initial_setup', 'user', $userId, null, ['role' => 'admin']);
+        $db->commit();
+        fwrite(STDOUT, "Administrator account created. Sign in using the email you entered.\n");
+    } finally {
+        $db->query("SELECT RELEASE_LOCK('victory_yudh_initial_admin_setup')");
+    }
 } catch (Throwable $e) {
     if (isset($db) && $db instanceof PDO && $db->inTransaction()) {
         $db->rollBack();

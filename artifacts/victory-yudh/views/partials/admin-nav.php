@@ -14,6 +14,7 @@
       ['admin-tournaments','Tournaments','fa-trophy'],
       ['admin-results','Results & scoring','fa-ranking-star'],
       ['admin-users','Users & teams','fa-users'],
+      ['admin-teams','Team management','fa-people-group'],
       ['admin-wallet','Payments & wallet','fa-wallet'],
       ['admin-withdrawals','Withdrawals','fa-money-bill-transfer'],
       ['admin-announcements','Announcements','fa-bullhorn'],

@@ -46,7 +46,10 @@ final class TournamentService
                 if (!$team || (int) $team['captain_id'] !== $userId) {
                     throw new DomainException('Only the team captain can register this team.');
                 }
-                $stmt = $db->prepare('SELECT user_id FROM team_members WHERE team_id=? ORDER BY joined_at, user_id');
+                $stmt = $db->prepare(
+                    "SELECT tm.user_id FROM team_members tm JOIN users u ON u.id=tm.user_id
+                     WHERE tm.team_id=? AND u.status='active' ORDER BY tm.joined_at, tm.user_id"
+                );
                 $stmt->execute([$teamId]);
                 $members = array_map('intval', $stmt->fetchAll(PDO::FETCH_COLUMN));
                 if (count($members) !== $requiredSize || !in_array($userId, $members, true)) {

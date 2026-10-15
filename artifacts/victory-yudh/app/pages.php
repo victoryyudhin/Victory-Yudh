@@ -359,6 +359,7 @@ function render_page(): array
         case 'admin-room':
         case 'admin-results':
         case 'admin-users':
+        case 'admin-teams':
         case 'admin-wallet':
         case 'admin-withdrawals':
         case 'admin-announcements':
@@ -498,6 +499,36 @@ function render_page(): array
                 )->fetchAll();
                 $teamCount = (int) $db->query('SELECT COUNT(*) FROM teams')->fetchColumn();
                 $contentFile = 'admin/users';
+            } elseif ($page === 'admin-teams') {
+                $search = mb_substr(trim(is_string($_GET['q'] ?? null) ? $_GET['q'] : ''), 0, 80);
+                $where = 'WHERE 1=1';
+                $params = [];
+                if ($search !== '') {
+                    $where .= ' AND (t.name LIKE ? OR u.email LIKE ? OR p.display_name LIKE ?)';
+                    for ($i = 0; $i < 3; $i++) $params[] = '%' . $search . '%';
+                }
+                $pageNumber = max(1, (int) ($_GET['p'] ?? 1));
+                [$teams, $total, $pageCount, $pageNumber] = paged_rows(
+                    'SELECT t.id,t.name,t.captain_id,t.created_at,u.email AS captain_email,p.display_name AS captain_name,
+                            (SELECT COUNT(*) FROM team_members tm WHERE tm.team_id=t.id) AS member_count,
+                            (SELECT COUNT(*) FROM team_invitations ti WHERE ti.team_id=t.id AND ti.status=\'pending\' AND ti.expires_at>UTC_TIMESTAMP()) AS pending_invites,
+                            (SELECT COUNT(*) FROM registrations r JOIN tournaments tr ON tr.id=r.tournament_id
+                             WHERE r.team_id=t.id AND r.status=\'confirmed\' AND tr.status IN (\'open\',\'locked\',\'live\')) AS active_entries
+                     FROM teams t JOIN users u ON u.id=t.captain_id LEFT JOIN profiles p ON p.user_id=u.id ' . $where . ' ORDER BY t.created_at DESC',
+                    'SELECT COUNT(*) FROM teams t JOIN users u ON u.id=t.captain_id LEFT JOIN profiles p ON p.user_id=u.id ' . $where,
+                    $params, $pageNumber, 20
+                );
+                foreach ($teams as &$team) {
+                    $stmt = $db->prepare(
+                        'SELECT tm.user_id,tm.member_role,tm.joined_at,u.email,u.status,p.display_name
+                         FROM team_members tm JOIN users u ON u.id=tm.user_id LEFT JOIN profiles p ON p.user_id=u.id
+                         WHERE tm.team_id=? ORDER BY tm.member_role DESC,tm.joined_at'
+                    );
+                    $stmt->execute([$team['id']]);
+                    $team['members'] = $stmt->fetchAll();
+                }
+                unset($team);
+                $contentFile = 'admin/teams';
             } elseif ($page === 'admin-wallet') {
                 $search = mb_substr(trim(is_string($_GET['q'] ?? null) ? $_GET['q'] : ''), 0, 100);
                 $statusFilter = is_string($_GET['status'] ?? null) ? $_GET['status'] : 'all';
@@ -519,6 +550,25 @@ function render_page(): array
                     'pending_refunds' => (int) $db->query("SELECT COUNT(*) FROM payment_refunds WHERE status='pending'")->fetchColumn(),
                 ];
                 $webhookEvents = $db->query('SELECT * FROM payment_webhook_events ORDER BY received_at DESC LIMIT 30')->fetchAll();
+                $ledgerSearch = mb_substr(trim(is_string($_GET['ledger_q'] ?? null) ? $_GET['ledger_q'] : ''), 0, 100);
+                $ledgerType = is_string($_GET['ledger_type'] ?? null) ? $_GET['ledger_type'] : 'all';
+                $ledgerTypes = ['deposit','entry_fee','entry_refund','prize','withdrawal_reserve','withdrawal_release','withdrawal_paid','admin_adjustment'];
+                if ($ledgerType !== 'all' && !in_array($ledgerType, $ledgerTypes, true)) $ledgerType = 'all';
+                $ledgerWhere = 'WHERE 1=1';
+                $ledgerParams = [];
+                if ($ledgerType !== 'all') { $ledgerWhere .= ' AND wt.transaction_type=?'; $ledgerParams[] = $ledgerType; }
+                if ($ledgerSearch !== '') {
+                    $ledgerWhere .= ' AND (u.email LIKE ? OR p.display_name LIKE ? OR wt.idempotency_key LIKE ? OR CAST(wt.reference_id AS CHAR) LIKE ?)';
+                    for ($i = 0; $i < 4; $i++) $ledgerParams[] = '%' . $ledgerSearch . '%';
+                }
+                $ledgerPage = max(1, (int) ($_GET['ledger_p'] ?? 1));
+                [$ledger, $ledgerTotal, $ledgerPages, $ledgerPage] = paged_rows(
+                    'SELECT wt.*,u.email,p.display_name FROM wallet_transactions wt
+                     JOIN users u ON u.id=wt.user_id LEFT JOIN profiles p ON p.user_id=u.id ' . $ledgerWhere . ' ORDER BY wt.id DESC',
+                    'SELECT COUNT(*) FROM wallet_transactions wt JOIN users u ON u.id=wt.user_id
+                     LEFT JOIN profiles p ON p.user_id=u.id ' . $ledgerWhere,
+                    $ledgerParams, $ledgerPage, 25
+                );
                 $contentFile = 'admin/wallet';
             } elseif ($page === 'admin-withdrawals') {
                 $search = mb_substr(trim(is_string($_GET['q'] ?? null) ? $_GET['q'] : ''), 0, 80);

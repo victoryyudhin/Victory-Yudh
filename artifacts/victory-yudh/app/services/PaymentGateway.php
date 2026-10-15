@@ -91,9 +91,12 @@ final class PaymentGateway
             $newStatus = $status === 'captured' ? 'captured' : 'authorized';
             $stmt = $db->prepare(
                 'UPDATE payment_orders SET provider_payment_id=?, status=?, captured_at=IF(?=\'captured\',NOW(),captured_at)
-                 WHERE id=? AND status IN (\'created\',\'authorized\',\'captured\')'
+                 WHERE id=? AND status<>\'refunded\''
             );
             $stmt->execute([$paymentId, $newStatus, $newStatus, $localOrderId]);
+            if ($stmt->rowCount() === 0 && $order['status'] === 'refunded') {
+                throw new DomainException('This payment order has already been fully refunded.');
+            }
             if ($newStatus === 'captured') {
                 self::creditCapturedOrder($db, $order, $paymentId);
             }
@@ -230,9 +233,12 @@ final class PaymentGateway
         if (!$order || (int) $payment['amount'] !== (int) $order['amount_minor'] || ($payment['currency'] ?? '') !== 'INR') {
             throw new DomainException('Captured payment does not match a local order.');
         }
+        if ($order['status'] === 'refunded') {
+            throw new DomainException('A fully refunded payment cannot be captured again.');
+        }
         $db->prepare(
             "UPDATE payment_orders SET provider_payment_id=?, status='captured', captured_at=COALESCE(captured_at,NOW())
-             WHERE id=? AND status IN ('created','authorized','captured')"
+             WHERE id=? AND status<>'refunded'"
         )->execute([$payment['id'], $order['id']]);
         self::creditCapturedOrder($db, $order, $payment['id']);
         return ['order_id' => (int) $order['id']];

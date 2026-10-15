@@ -1,45 +1,52 @@
-# [Project name]
+# Victory Yudh
 
-_Replace the heading above with the project's name, and this line with one sentence describing what this app does for users._
+Mobile-first Free Fire tournament platform with a PHP/MariaDB application, player accounts, teams, match scoring, wallet ledger, and admin operations.
 
 ## Run & Operate
 
-- `pnpm --filter @workspace/api-server run dev` — run the API server (port 5000)
-- `pnpm run typecheck` — full typecheck across all packages
-- `pnpm run build` — typecheck + build all packages
-- `pnpm --filter @workspace/api-spec run codegen` — regenerate API hooks and Zod schemas from the OpenAPI spec
-- `pnpm --filter @workspace/db run push` — push DB schema changes (dev only)
-- Required env: `DATABASE_URL` — Postgres connection string
+- Run `cd artifacts/victory-yudh && bash scripts/dev.sh` for the PHP development server and local MariaDB database.
+- Run `cd artifacts/victory-yudh && pnpm install && pnpm run css:build` to build the Tailwind CSS asset.
+- Run `cd artifacts/victory-yudh && php bin/create-admin.php` once after schema setup; this CLI-only command creates the first admin.
+- Run `cd artifacts/victory-yudh && bash tests/run.sh` to run the isolated PHP/MariaDB integration tests.
+- See `artifacts/victory-yudh/README.md` for setup, payment sandbox, production hosting, migration, backup, and troubleshooting instructions.
+- Runtime configuration is in `artifacts/victory-yudh/.env.example`; never commit `.env`.
 
 ## Stack
 
-- pnpm workspaces, Node.js 24, TypeScript 5.9
-- API: Express 5
-- DB: PostgreSQL + Drizzle ORM
-- Validation: Zod (`zod/v4`), `drizzle-zod`
-- API codegen: Orval (from OpenAPI spec)
-- Build: esbuild (CJS bundle)
+- App: PHP 8.1+, HTML5, Tailwind CSS, vanilla JavaScript, PDO
+- Database: MariaDB/MySQL with InnoDB transactions
+- Build tool only: pnpm + Tailwind CSS CLI
+- Payments: server-side Razorpay Orders, signature checks, and signed webhooks; no fake capture
 
 ## Where things live
 
-_Populate as you build — short repo map plus pointers to the source-of-truth file for DB schema, API contracts, theme files, etc._
+- `artifacts/victory-yudh/app/` — HTTP actions, database setup, session/security helpers, and domain services.
+- `artifacts/victory-yudh/public/` — web document root, router, PWA files, static assets, uploads, health check, and Razorpay webhook.
+- `artifacts/victory-yudh/views/` — public and admin server-rendered pages and shared layout.
+- `artifacts/victory-yudh/schema.sql` / `migrations/` — additive database schema.
+- `artifacts/victory-yudh/tests/` — isolated integration tests.
 
 ## Architecture decisions
 
-_Populate as you build — non-obvious choices a reader couldn't infer from the code (3-5 bullets)._
+- Use regular HTML form submissions. Do not replace the explicitly requested stack with a JavaScript framework or AJAX.
+- Wallet and payment amounts are integer paise; each balance change has an idempotent ledger entry inside a database transaction.
+- Room credentials and payout destinations are authenticated-encrypted using `APP_KEY`; keep that key stable across restarts and backups.
+- Do not claim live Free Fire result access or mark withdrawals paid without a confirmed payout reference.
 
 ## Product
 
-_Describe the high-level user-facing capabilities of this app once they exist._
+Players browse Solo/Duo/Squad tournaments, register individually or as teams, track wallet activity and match scores, view result tables, and request withdrawals. Administrators manage tournaments, teams, results, payments, withdrawals, announcements, and support.
 
 ## User preferences
 
-_Populate as you build — explicit user instructions worth remembering across sessions._
+- The product is Victory Yudh and the implementation must stay on HTML5, Tailwind CSS, vanilla JavaScript, PHP 8+, and MySQL/MariaDB.
 
 ## Gotchas
 
-_Populate as you build — sharp edges, "always run X before Y" rules._
+- `scripts/dev.sh` is for the local Replit development database only; it creates/reuses `var/mysql` and applies additive `CREATE TABLE IF NOT EXISTS` schema.
+- Do not run optional demo seed data against a production database.
+- PHP built-in server is for development only; production should serve `public/` using PHP-FPM/Apache with HTTPS.
 
 ## Pointers
 
-- See the `pnpm-workspace` skill for workspace structure, TypeScript setup, and package details
+- See `artifacts/victory-yudh/README.md` for full operation and recovery guidance.

@@ -17,6 +17,7 @@ function fallback_for_action(string $action): string
         'admin-cancel-tournament', 'admin-refund-registration' => 'index.php?page=admin-tournaments',
         'admin-withdraw-review' => 'index.php?page=admin-withdrawals',
         'admin-user-toggle' => 'index.php?page=admin-users',
+        'admin-team-remove-member' => 'index.php?page=admin-teams',
         'admin-payment-refund' => 'index.php?page=admin-wallet',
         'admin-announcement-save', 'admin-announcement-toggle' => 'index.php?page=admin-announcements',
         'admin-support-status' => 'index.php?page=admin-support',
@@ -618,6 +619,12 @@ function handle_post_action(): never
             audit_log((int) $admin['id'], 'user.status_changed', 'user', $id, ['status' => $target['status']], ['status' => $newStatus]);
             flash('success', 'Player account status updated.');
             redirect('index.php?page=admin-users');
+        }
+        case 'admin-team-remove-member': {
+            $admin = require_admin();
+            TeamService::adminRemoveMember((int) $admin['id'], post_int('team_id', 1), post_int('member_id', 1));
+            flash('success', 'Team member removed. Active tournament entries were protected.');
+            redirect('index.php?page=admin-teams');
         }
         case 'admin-payment-refund': {
             $admin = require_admin();

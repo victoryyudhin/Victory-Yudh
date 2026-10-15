@@ -25,12 +25,17 @@ if (session_status() !== PHP_SESSION_ACTIVE) {
     session_start();
 }
 
+header_remove('X-Powered-By');
+header('Cache-Control: no-store, private');
 header('X-Content-Type-Options: nosniff');
 header('X-Frame-Options: DENY');
 header('Referrer-Policy: strict-origin-when-cross-origin');
 header('Permissions-Policy: camera=(), microphone=(), geolocation=()');
 $cspNonce = base64_encode(random_bytes(18));
 header("Content-Security-Policy: default-src 'self'; img-src 'self' data: https:; style-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com; font-src 'self' https://cdnjs.cloudflare.com; script-src 'self' 'nonce-$cspNonce' https://checkout.razorpay.com; connect-src 'self'; frame-src https://api.razorpay.com https://checkout.razorpay.com; base-uri 'self'; form-action 'self' https://api.razorpay.com; frame-ancestors 'none'");
+if ($https) {
+    header('Strict-Transport-Security: max-age=31536000; includeSubDomains');
+}
 
 require_once __DIR__ . '/services/WalletService.php';
 require_once __DIR__ . '/services/TournamentService.php';

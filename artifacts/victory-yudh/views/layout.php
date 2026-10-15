@@ -14,6 +14,7 @@ $admin = $current && $current['role'] === 'admin';
   <meta name="description" content="Join Free Fire Solo, Duo and Squad tournaments, compete for prizes, and track every match on Victory Yudh.">
   <link rel="manifest" href="<?= h(app_url('manifest.webmanifest')) ?>">
   <link rel="icon" href="<?= h(app_url('assets/mark.svg')) ?>" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="<?= h(app_url('assets/icon-192.png')) ?>">
   <link rel="stylesheet" href="<?= h(app_url('assets/app.css')) ?>">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.7.2/css/all.min.css" referrerpolicy="no-referrer">
   <title><?= h($pageTitle) ?> · Victory Yudh</title>

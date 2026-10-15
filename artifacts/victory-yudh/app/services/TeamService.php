@@ -145,4 +145,35 @@ final class TeamService
             audit_log($captainId, 'team.member_removed', 'team', $teamId, ['member_id' => $memberId], null);
         });
     }
+
+    public static function adminRemoveMember(int $adminId, int $teamId, int $memberId): void
+    {
+        $db = Database::connection();
+        WalletService::atomic($db, function (PDO $db) use ($adminId, $teamId, $memberId): void {
+            $stmt = $db->prepare('SELECT captain_id, name FROM teams WHERE id=? FOR UPDATE');
+            $stmt->execute([$teamId]);
+            $team = $stmt->fetch();
+            if (!$team) {
+                throw new DomainException('Team not found.');
+            }
+            if ((int) $team['captain_id'] === $memberId) {
+                throw new DomainException('The team captain cannot be removed as a member.');
+            }
+            $stmt = $db->prepare(
+                "SELECT COUNT(*) FROM registrations r JOIN tournaments t ON t.id=r.tournament_id
+                 WHERE r.team_id=? AND r.status='confirmed' AND t.status IN ('open','locked','live')"
+            );
+            $stmt->execute([$teamId]);
+            if ((int) $stmt->fetchColumn() > 0) {
+                throw new DomainException('Team members cannot change while the team has an active tournament entry.');
+            }
+            $stmt = $db->prepare('DELETE FROM team_members WHERE team_id=? AND user_id=? AND member_role=\'member\'');
+            $stmt->execute([$teamId, $memberId]);
+            if ($stmt->rowCount() !== 1) {
+                throw new DomainException('That player is not an active member of this team.');
+            }
+            notify_user($memberId, 'invitation', 'Team membership updated', 'An administrator removed you from ' . $team['name'] . '.', 'index.php?page=team');
+            audit_log($adminId, 'team.member_removed_by_admin', 'team', $teamId, ['member_id' => $memberId], null);
+        });
+    }
 }
