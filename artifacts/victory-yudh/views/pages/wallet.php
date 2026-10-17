@@ -8,10 +8,10 @@
     <section class="glass-card rounded-2xl p-5">
       <div class="flex items-center gap-3"><span class="grid h-10 w-10 place-items-center rounded-xl bg-violet-500/10 text-violet-300"><i class="fa-solid fa-circle-plus" aria-hidden="true"></i></span><div><h2 class="font-black">Add money</h2><p class="text-xs text-slate-500">Deposits are credited only after provider verification.</p></div></div>
       <?php if ($paymentConfigured): ?>
-        <form method="post" action="<?= h(app_url('index.php?action=deposit-order')) ?>" class="mt-5 space-y-3"><?= csrf_field() ?><label class="block text-xs font-bold text-slate-400">Deposit amount (INR)<input class="form-control mt-2" type="number" name="amount_rupees" min="1" max="500000" step="0.01" required placeholder="e.g. 250"></label><button class="btn-primary w-full rounded-xl px-4 py-3 text-sm font-black">Continue to Razorpay test/live checkout</button></form>
+        <form method="post" action="<?= h(app_url('index.php?action=deposit-order')) ?>" class="mt-5 space-y-3"><?= csrf_field() ?><label class="block text-xs font-bold text-slate-400">Deposit amount (INR)<input class="form-control mt-2" type="number" name="amount_rupees" min="1" max="500000" step="0.01" required placeholder="e.g. 250"></label><button class="btn-primary w-full rounded-xl px-4 py-3 text-sm font-black">Continue to Razorpay checkout</button></form>
         <p class="mt-3 text-[10px] leading-5 text-slate-500">Razorpay hosted checkout opens after a server-created order. Only a verified signature or webhook can credit the wallet.</p>
       <?php else: ?>
-        <div class="mt-5 rounded-xl border border-amber-300/15 bg-amber-300/[.06] p-4"><p class="text-xs font-bold text-amber-200"><i class="fa-solid fa-triangle-exclamation mr-2" aria-hidden="true"></i>Payments are not configured</p><p class="mt-2 text-xs leading-5 text-slate-400">Set RAZORPAY_KEY_ID and RAZORPAY_KEY_SECRET in environment variables to enable test or live orders. No deposit is simulated.</p></div>
+        <div class="mt-5 rounded-xl border border-amber-300/15 bg-amber-300/[.06] p-4"><p class="text-xs font-bold text-amber-200"><i class="fa-solid fa-triangle-exclamation mr-2" aria-hidden="true"></i>Payments are not configured</p><p class="mt-2 text-xs leading-5 text-slate-400">Configure the Razorpay key ID, key secret, and webhook secret. Development and testing require test-mode keys; production requires live-mode keys. No deposit is simulated.</p></div>
       <?php endif; ?>
     </section>
     <section class="glass-card rounded-2xl p-5">

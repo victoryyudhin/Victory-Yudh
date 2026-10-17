@@ -5,7 +5,7 @@ Mobile-first Free Fire tournament platform with a PHP/MariaDB application, playe
 ## Run & Operate
 
 - Run `cd artifacts/victory-yudh && bash scripts/dev.sh` for the PHP development server and local MariaDB database.
-- Run `cd artifacts/victory-yudh && pnpm install && pnpm run css:build` to build the Tailwind CSS asset.
+- Run `pnpm --filter @workspace/victory-yudh install --frozen-lockfile` from the workspace root, then `cd artifacts/victory-yudh && pnpm run css:build` to build the Tailwind CSS asset.
 - Run `cd artifacts/victory-yudh && php bin/create-admin.php` once after schema setup; this CLI-only command creates the first admin.
 - Run `cd artifacts/victory-yudh && bash tests/run.sh` to run the isolated PHP/MariaDB integration tests.
 - See `artifacts/victory-yudh/README.md` for setup, payment sandbox, production hosting, migration, backup, and troubleshooting instructions.

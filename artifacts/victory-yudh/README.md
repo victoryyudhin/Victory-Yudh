@@ -27,11 +27,11 @@ From the workspace root:
 
 ```sh
 cd artifacts/victory-yudh
-pnpm install
+pnpm --filter @workspace/victory-yudh install --frozen-lockfile
 bash scripts/dev.sh
 ```
 
-The development script starts/reuses a local MariaDB instance under `var/mysql`, creates the local `victory_yudh` database/user if needed, applies the non-destructive schema, builds CSS, and starts the PHP development server on `$PORT` (8080 by default). Its local database credentials are development-only; do not use them on a public server. Local encryption key is persisted in ignored `var/dev-app-key`, so encrypted room/payout data stays readable between development restarts.
+The development script starts/reuses a local MariaDB instance under `var/mysql`, creates the local `victory_yudh` database/user if needed, applies the non-destructive schema, builds CSS, and starts the PHP development server on `$PORT` (8099 by default in this workspace). Its local database credentials are development-only; do not use them on a public server. Local encryption key is persisted in ignored `var/dev-app-key`, so encrypted room/payout data stays readable between development restarts.
 
 The script is for local development only. It imports additive schema on start and never drops or truncates application data. To stop it, stop the configured workflow. The local database remains in `var/mysql`.
 
@@ -82,8 +82,8 @@ Do not expose CLI output, passwords, or database credentials in support requests
 ## Razorpay sandbox setup
 
 1. Create or use a Razorpay account that is eligible for the intended use; provider approval and account settings are outside this application.
-2. In the provider dashboard, create **test** API credentials. Add `RAZORPAY_KEY_ID`, `RAZORPAY_KEY_SECRET`, and `RAZORPAY_WEBHOOK_SECRET` to Replit Secrets or the hosting platform's environment-secret facility. Do not commit credentials or put them in client-side JavaScript.
-3. Set `APP_URL` to the HTTPS public URL. Configure a Razorpay webhook at `APP_URL/webhook/razorpay`, using the matching webhook secret and the events `payment.authorized`, `payment.captured`, `payment.failed`, `refund.processed`, and `refund.failed`.
+2. In the provider dashboard, create **test-mode** API credentials (the key ID starts with `rzp_test_`). Add `RAZORPAY_KEY_ID`, `RAZORPAY_KEY_SECRET`, and `RAZORPAY_WEBHOOK_SECRET` to Replit Secrets or the hosting platform's environment-secret facility. Do not commit credentials or put them in client-side JavaScript. Development/testing reject live-mode keys; production requires a live-mode key ID starting with `rzp_live_`.
+3. Set `APP_URL` to the public HTTPS URL. Register a Razorpay webhook at `APP_URL/webhook/razorpay`, using the matching webhook secret and the events `payment.authorized`, `payment.captured`, `payment.failed`, `refund.processed`, and `refund.failed`. Replit development URLs are private and are not suitable for Razorpay webhooks; this workspace has no published production URL yet.
 4. In the app, create a deposit order and complete the provider's test-mode checkout. Wallet credit is posted only after server-side signature verification and provider capture, or a correctly signed captured webhook.
 5. Confirm the provider sends webhook events and inspect payment/ledger status in the admin panel before considering a live switch.
 

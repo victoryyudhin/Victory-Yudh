@@ -7,13 +7,16 @@ final class PaymentGateway
 
     public static function isConfigured(): bool
     {
-        return (string) config('razorpay_key_id', '') !== ''
-            && (string) config('razorpay_key_secret', '') !== '';
+        $keyId = (string) config('razorpay_key_id', '');
+        return $keyId !== ''
+            && (string) config('razorpay_key_secret', '') !== ''
+            && (string) config('razorpay_webhook_secret', '') !== ''
+            && self::keyMatchesEnvironment($keyId);
     }
 
     public static function createOrder(int $userId, int $amountMinor): array
     {
-        self::requireApiCredentials();
+        self::requirePaymentConfiguration();
         if ($amountMinor < 100 || $amountMinor > 50000000) {
             throw new InvalidArgumentException('Deposit must be between ₹1 and ₹500,000.');
         }
@@ -60,7 +63,7 @@ final class PaymentGateway
 
     public static function verifyReturn(int $userId, int $localOrderId, string $providerOrderId, string $paymentId, string $signature): string
     {
-        self::requireApiCredentials();
+        self::requirePaymentConfiguration();
         if ($localOrderId < 1 || $providerOrderId === '' || $paymentId === '' || $signature === '') {
             throw new InvalidArgumentException('Payment verification details are incomplete.');
         }
@@ -157,7 +160,7 @@ final class PaymentGateway
 
     public static function requestRefund(int $paymentOrderId, int $amountMinor, int $adminId): int
     {
-        self::requireApiCredentials();
+        self::requirePaymentConfiguration();
         $db = Database::connection();
         $refundId = WalletService::atomic($db, function (PDO $db) use ($paymentOrderId, $amountMinor, $adminId): int {
             $stmt = $db->prepare('SELECT * FROM payment_orders WHERE id=? FOR UPDATE');
@@ -404,9 +407,29 @@ final class PaymentGateway
 
     private static function requireApiCredentials(): void
     {
-        if (!self::isConfigured()) {
-            throw new DomainException('Razorpay is not enabled. Add the Razorpay test or live key ID and key secret in environment variables.');
+        $keyId = (string) config('razorpay_key_id', '');
+        $keySecret = (string) config('razorpay_key_secret', '');
+        if ($keyId === '' || $keySecret === '') {
+            throw new DomainException('Razorpay is not enabled. Configure the key ID and key secret in environment variables.');
         }
+        if (!self::keyMatchesEnvironment($keyId)) {
+            $expectedMode = config('app_env', 'production') === 'production' ? 'live' : 'test';
+            throw new DomainException('Razorpay ' . $expectedMode . ' keys are required for this application environment.');
+        }
+    }
+
+    private static function requirePaymentConfiguration(): void
+    {
+        self::requireApiCredentials();
+        if ((string) config('razorpay_webhook_secret', '') === '') {
+            throw new DomainException('Configure the Razorpay webhook secret before enabling deposits or refunds.');
+        }
+    }
+
+    private static function keyMatchesEnvironment(string $keyId): bool
+    {
+        $prefix = config('app_env', 'production') === 'production' ? 'rzp_live_' : 'rzp_test_';
+        return str_starts_with($keyId, $prefix);
     }
 }
 

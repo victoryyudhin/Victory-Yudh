@@ -245,6 +245,42 @@ run_case('final result corrections become provisional and recalculation preserve
     check((int)$stmt->fetchColumn() >= 1, 'Correction audit event is missing.');
 });
 
+run_case('Razorpay requires complete credentials and an environment-matched key mode', function (): void {
+    $names = ['APP_ENV', 'RAZORPAY_KEY_ID', 'RAZORPAY_KEY_SECRET', 'RAZORPAY_WEBHOOK_SECRET'];
+    $original = [];
+    foreach ($names as $name) {
+        $original[$name] = getenv($name);
+    }
+    try {
+        putenv('APP_ENV=testing');
+        putenv('RAZORPAY_KEY_ID=rzp_live_guard_test');
+        putenv('RAZORPAY_KEY_SECRET=guard-secret');
+        putenv('RAZORPAY_WEBHOOK_SECRET=guard-webhook-secret');
+        check(!PaymentGateway::isConfigured(), 'Live credentials must not enable a test environment.');
+        expect_exception(DomainException::class, fn() => PaymentGateway::createOrder(1, 100));
+
+        putenv('RAZORPAY_KEY_ID=rzp_test_guard_test');
+        check(PaymentGateway::isConfigured(), 'Complete Razorpay test credentials should enable a test environment.');
+        putenv('RAZORPAY_WEBHOOK_SECRET');
+        check(!PaymentGateway::isConfigured(), 'A missing webhook secret must disable payment operations.');
+        expect_exception(DomainException::class, fn() => PaymentGateway::createOrder(1, 100));
+
+        putenv('RAZORPAY_WEBHOOK_SECRET=guard-webhook-secret');
+        putenv('APP_ENV=production');
+        check(!PaymentGateway::isConfigured(), 'Test credentials must not enable a production environment.');
+        putenv('RAZORPAY_KEY_ID=rzp_live_guard_test');
+        check(PaymentGateway::isConfigured(), 'Complete Razorpay live credentials should enable production mode.');
+    } finally {
+        foreach ($original as $name => $value) {
+            if ($value === false) {
+                putenv($name);
+            } else {
+                putenv($name . '=' . $value);
+            }
+        }
+    }
+});
+
 run_case('signed payment webhook credits once and rejects duplicate events', function () use ($db, $context): void {
     $userId = $context['payment'];
     $providerOrder = 'order_test_' . bin2hex(random_bytes(6));
