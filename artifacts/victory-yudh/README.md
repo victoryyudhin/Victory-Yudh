@@ -85,6 +85,20 @@ php bin/create-admin.php --non-interactive
 
 Before running it, provide `INITIAL_ADMIN_EMAIL`, `INITIAL_ADMIN_NAME`, and `INITIAL_ADMIN_PASSWORD` through the process environment. The password must be at least 16 characters and must not be passed as a command-line argument, committed to a seed file, or written to shell history. In Replit, provide the password through Tools > Secrets; remove that secret after successful setup. The development server launcher clears all three bootstrap variables before starting the web server. The command removes the variables from its own environment, stores only a password hash, and preserves the same one-admin-only check and database lock as interactive mode. In either mode, the command refuses to create an admin if one already exists.
 
+In this Replit workspace, run the development setup helper so the local database settings are initialized for the CLI:
+
+```sh
+bash scripts/dev.sh --admin-setup
+```
+
+If the configured email already belongs to an active player account, explicitly promote that account instead of trying to insert a duplicate email:
+
+```sh
+bash scripts/dev.sh --admin-setup --promote-existing
+```
+
+Promotion changes the existing account's role to admin, replaces its password hash, and updates its display name. It preserves the account ID, wallet, tournament history, Free Fire UID, and avatar, and writes an audit entry. Suspended accounts cannot be promoted. Use this only after confirming the existing account is the intended administrator.
+
 Do not expose CLI output, passwords, or database credentials in support requests or logs. To grant additional admin access, use a controlled database maintenance procedure, not a public form.
 
 ## Razorpay sandbox setup

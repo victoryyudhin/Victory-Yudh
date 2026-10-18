@@ -11,9 +11,14 @@ if (PHP_SAPI !== 'cli') {
 }
 
 $arguments = array_slice($argv, 1);
-$nonInteractive = $arguments === ['--non-interactive'];
-if ($arguments !== [] && !$nonInteractive) {
-    fwrite(STDERR, "Usage: php bin/create-admin.php [--non-interactive]\n");
+$nonInteractive = in_array('--non-interactive', $arguments, true);
+$promoteExisting = in_array('--promote-existing', $arguments, true);
+$validArguments = $arguments === []
+    || $arguments === ['--non-interactive']
+    || $arguments === ['--non-interactive', '--promote-existing']
+    || $arguments === ['--promote-existing', '--non-interactive'];
+if (!$validArguments) {
+    fwrite(STDERR, "Usage: php bin/create-admin.php [--non-interactive [--promote-existing]]\n");
     exit(2);
 }
 
@@ -50,10 +55,12 @@ function required_bootstrap_value(string $name): string
 
 try {
     $db = Database::connection();
-    $count = (int) $db->query("SELECT COUNT(*) FROM users WHERE role='admin'")->fetchColumn();
-    if ($count > 0) {
-        fwrite(STDERR, "An administrator already exists. This one-time setup command is disabled.\n");
-        exit(1);
+    if (!$promoteExisting) {
+        $count = (int) $db->query("SELECT COUNT(*) FROM users WHERE role='admin'")->fetchColumn();
+        if ($count > 0) {
+            fwrite(STDERR, "An administrator already exists. This one-time setup command is disabled.\n");
+            exit(1);
+        }
     }
 
     if ($nonInteractive) {
@@ -80,28 +87,73 @@ try {
         throw new InvalidArgumentException('Passwords must match and be at least 16 characters.');
     }
 
-    if ((int) $db->query("SELECT GET_LOCK('victory_yudh_initial_admin_setup', 10)")->fetchColumn() !== 1) {
+    $lockName = 'victory_yudh_initial_admin_setup';
+    $lock = $db->prepare('SELECT GET_LOCK(?, 10)');
+    $lock->execute([$lockName]);
+    if ((int) $lock->fetchColumn() !== 1) {
         throw new RuntimeException('Could not safely acquire the one-time admin setup lock.');
     }
     try {
         $db->beginTransaction();
-        $check = $db->query("SELECT COUNT(*) FROM users WHERE role='admin'");
-        if ((int) $check->fetchColumn() > 0) {
-            throw new RuntimeException('An administrator was created concurrently. No account was changed.');
+        if ($promoteExisting) {
+            $find = $db->prepare('SELECT id, role, status FROM users WHERE email=? FOR UPDATE');
+            $find->execute([$email]);
+            $account = $find->fetch();
+            if (!$account) {
+                throw new RuntimeException('No existing account matches the configured email.');
+            }
+            if ($account['role'] !== 'user') {
+                throw new RuntimeException('The existing account is not eligible for promotion.');
+            }
+            if ($account['status'] !== 'active') {
+                throw new RuntimeException('A suspended account cannot be promoted.');
+            }
+
+            $userId = (int) $account['id'];
+            $passwordHash = password_hash($password, PASSWORD_DEFAULT);
+            unset($password);
+            if (!is_string($passwordHash)) {
+                throw new RuntimeException('Could not secure the admin password.');
+            }
+            $update = $db->prepare("UPDATE users SET role='admin', password_hash=? WHERE id=? AND role='user'");
+            $update->execute([$passwordHash, $userId]);
+            unset($passwordHash);
+
+            $profile = $db->prepare('SELECT user_id FROM profiles WHERE user_id=? FOR UPDATE');
+            $profile->execute([$userId]);
+            if ($profile->fetchColumn() === false) {
+                $db->prepare('INSERT INTO profiles (user_id, display_name) VALUES (?,?)')
+                    ->execute([$userId, $displayName]);
+            } else {
+                $db->prepare('UPDATE profiles SET display_name=? WHERE user_id=?')
+                    ->execute([$displayName, $userId]);
+            }
+            audit_log(null, 'admin.account_promoted', 'user', $userId, ['role' => 'user'], ['role' => 'admin']);
+            $db->commit();
+            fwrite(STDOUT, "Existing account promoted to administrator. Sign in using the configured email.\n");
+        } else {
+            $check = $db->query("SELECT COUNT(*) FROM users WHERE role='admin'");
+            if ((int) $check->fetchColumn() > 0) {
+                throw new RuntimeException('An administrator was created concurrently. No account was changed.');
+            }
+            $passwordHash = password_hash($password, PASSWORD_DEFAULT);
+            unset($password);
+            if (!is_string($passwordHash)) {
+                throw new RuntimeException('Could not secure the admin password.');
+            }
+            $stmt = $db->prepare("INSERT INTO users (email, password_hash, role) VALUES (?,?, 'admin')");
+            $stmt->execute([$email, $passwordHash]);
+            unset($passwordHash);
+            $userId = (int) $db->lastInsertId();
+            $db->prepare('INSERT INTO profiles (user_id, display_name) VALUES (?,?)')->execute([$userId, $displayName]);
+            $db->prepare('INSERT INTO wallet_accounts (user_id) VALUES (?)')->execute([$userId]);
+            audit_log($userId, 'admin.initial_setup', 'user', $userId, null, ['role' => 'admin']);
+            $db->commit();
+            fwrite(STDOUT, "Administrator account created. Sign in using the configured email.\n");
         }
-        $passwordHash = password_hash($password, PASSWORD_DEFAULT);
-        unset($password);
-        $stmt = $db->prepare("INSERT INTO users (email, password_hash, role) VALUES (?,?, 'admin')");
-        $stmt->execute([$email, $passwordHash]);
-        unset($passwordHash);
-        $userId = (int) $db->lastInsertId();
-        $db->prepare('INSERT INTO profiles (user_id, display_name) VALUES (?,?)')->execute([$userId, $displayName]);
-        $db->prepare('INSERT INTO wallet_accounts (user_id) VALUES (?)')->execute([$userId]);
-        audit_log($userId, 'admin.initial_setup', 'user', $userId, null, ['role' => 'admin']);
-        $db->commit();
-        fwrite(STDOUT, "Administrator account created. Sign in using the configured email.\n");
     } finally {
-        $db->query("SELECT RELEASE_LOCK('victory_yudh_initial_admin_setup')");
+        $release = $db->prepare('SELECT RELEASE_LOCK(?)');
+        $release->execute([$lockName]);
     }
 } catch (Throwable $e) {
     if (isset($db) && $db instanceof PDO && $db->inTransaction()) {

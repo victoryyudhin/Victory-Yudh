@@ -4,6 +4,19 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
+ADMIN_SETUP=0
+ADMIN_SETUP_ARGS=()
+if [[ $# -eq 1 && "$1" == "--admin-setup" ]]; then
+  ADMIN_SETUP=1
+  ADMIN_SETUP_ARGS=(--non-interactive)
+elif [[ $# -eq 2 && "$1" == "--admin-setup" && "$2" == "--promote-existing" ]]; then
+  ADMIN_SETUP=1
+  ADMIN_SETUP_ARGS=(--non-interactive --promote-existing)
+elif [[ $# -gt 0 ]]; then
+  echo "Usage: bash scripts/dev.sh [--admin-setup [--promote-existing]]" >&2
+  exit 2
+fi
+
 mkdir -p var/mysql var/run var/uploads
 chmod 700 var var/mysql var/run var/uploads
 
@@ -81,6 +94,14 @@ FLUSH PRIVILEGES;
 SQL
 
 mariadb --socket="$ROOT/var/run/mysql.sock" --user=root "$DB_NAME" < schema.sql
+if [[ "$ADMIN_SETUP" == "1" ]]; then
+  DB_HOST="localhost;unix_socket=$ROOT/var/run/mysql.sock" \
+  DB_USER=root \
+  DB_PASSWORD= \
+  php bin/create-admin.php "${ADMIN_SETUP_ARGS[@]}"
+  exit 0
+fi
+
 pnpm --filter @workspace/victory-yudh run css:build
 chmod 644 "$ROOT/public/assets/app.css"
 unset INITIAL_ADMIN_EMAIL INITIAL_ADMIN_NAME INITIAL_ADMIN_PASSWORD

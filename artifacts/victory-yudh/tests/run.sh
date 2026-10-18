@@ -106,6 +106,65 @@ if INITIAL_ADMIN_EMAIL="$BOOTSTRAP_EMAIL" \
 fi
 unset BOOTSTRAP_PASSWORD
 
+PROMOTION_EMAIL="promotion-${SUFFIX}@example.invalid"
+PROMOTION_OLD_PASSWORD="$(php -r 'echo bin2hex(random_bytes(24));')"
+PROMOTION_PASSWORD="$(php -r 'echo bin2hex(random_bytes(24));')"
+if ! TEST_PROMOTION_EMAIL="$PROMOTION_EMAIL" \
+  TEST_PROMOTION_PASSWORD="$PROMOTION_OLD_PASSWORD" \
+  php -r '
+    require "app/config.php";
+    require "app/db.php";
+    $db = Database::connection();
+    $stmt = $db->prepare("INSERT INTO users (email, password_hash, role) VALUES (?,?, \"user\")");
+    $stmt->execute([getenv("TEST_PROMOTION_EMAIL"), password_hash((string) getenv("TEST_PROMOTION_PASSWORD"), PASSWORD_DEFAULT)]);
+    $userId = (int) $db->lastInsertId();
+    $db->prepare("INSERT INTO profiles (user_id,display_name,free_fire_uid,avatar_path) VALUES (?,?,?,?)")
+        ->execute([$userId, "Player Before Promotion", "T" . bin2hex(random_bytes(8)), "uploads/preserved-avatar.png"]);
+    $db->prepare("INSERT INTO wallet_accounts (user_id) VALUES (?)")->execute([$userId]);
+  '; then
+  echo "Could not create the isolated player fixture for promotion." >&2
+  exit 1
+fi
+
+if ! INITIAL_ADMIN_EMAIL="$PROMOTION_EMAIL" \
+  INITIAL_ADMIN_NAME="Promoted Test" \
+  INITIAL_ADMIN_PASSWORD="$PROMOTION_PASSWORD" \
+  php bin/create-admin.php --non-interactive --promote-existing >"$TEMP_DIR/admin-promotion.log" 2>&1; then
+  cat "$TEMP_DIR/admin-promotion.log" >&2
+  echo "Non-interactive promotion failed." >&2
+  exit 1
+fi
+
+if ! TEST_PROMOTION_EMAIL="$PROMOTION_EMAIL" \
+  TEST_PROMOTION_PASSWORD="$PROMOTION_PASSWORD" \
+  php -r '
+    require "app/config.php";
+    require "app/db.php";
+    $db = Database::connection();
+    $stmt = $db->prepare(
+        "SELECT u.id, u.role, u.status, u.password_hash, p.display_name, p.free_fire_uid, p.avatar_path,
+                (SELECT COUNT(*) FROM wallet_accounts w WHERE w.user_id = u.id) AS wallet_count,
+                (SELECT COUNT(*) FROM audit_logs a WHERE a.entity_id = u.id AND a.action = \"admin.account_promoted\") AS promotion_count
+         FROM users u JOIN profiles p ON p.user_id = u.id
+         WHERE u.email = ?"
+    );
+    $stmt->execute([getenv("TEST_PROMOTION_EMAIL")]);
+    $account = $stmt->fetch();
+    if (!$account || $account["role"] !== "admin" || $account["status"] !== "active"
+        || $account["display_name"] !== "Promoted Test"
+        || $account["free_fire_uid"] === null || $account["avatar_path"] !== "uploads/preserved-avatar.png"
+        || (int) $account["wallet_count"] !== 1 || (int) $account["promotion_count"] !== 1
+        || !password_verify((string) getenv("TEST_PROMOTION_PASSWORD"), $account["password_hash"])) {
+        fwrite(STDERR, "Promotion did not preserve account data or secure the password.\n");
+        exit(1);
+    }
+  '; then
+  echo "Promotion verification failed." >&2
+  exit 1
+fi
+echo "PASS - active player promotion updates admin access while preserving account data"
+unset PROMOTION_OLD_PASSWORD PROMOTION_PASSWORD
+
 php tests/run.php
 
 php -S "127.0.0.1:$PORT" -t public public/router.php >"$TEMP_DIR/php-server.log" 2>&1 &
