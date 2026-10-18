@@ -13,7 +13,8 @@ function fallback_for_action(string $action): string
         'support-submit' => 'index.php?page=support',
         'admin-tournament-save' => 'index.php?page=admin-tournaments',
         'admin-room-save' => 'index.php?page=admin-room&id=' . max(0, (int) $tournamentId),
-        'admin-result-save', 'admin-results-import', 'admin-results-recalculate', 'admin-results-publish', 'admin-prize-credit' => 'index.php?page=admin-results&id=' . max(0, (int) $tournamentId),
+        'admin-result-save', 'admin-results-bulk-save', 'admin-scoring-save', 'admin-results-import',
+        'admin-results-recalculate', 'admin-results-publish', 'admin-prize-credit' => 'index.php?page=admin-results&id=' . max(0, (int) $tournamentId),
         'admin-cancel-tournament', 'admin-refund-registration' => 'index.php?page=admin-tournaments',
         'admin-withdraw-review' => 'index.php?page=admin-withdrawals',
         'admin-user-toggle' => 'index.php?page=admin-users',
@@ -70,6 +71,30 @@ function parse_placement_points(string $text): array
     }
     ksort($rules, SORT_NUMERIC);
     return $rules;
+}
+
+function parse_rank_prize_percentages(string $text): array
+{
+    $percentages = [];
+    foreach (preg_split('/\R/', $text) ?: [] as $line) {
+        $line = trim($line);
+        if ($line === '') {
+            continue;
+        }
+        if (!preg_match('/^([1-9][0-9]{0,2})\s*[:=]\s*(100|[1-9][0-9]?)$/', $line, $match)) {
+            throw new InvalidArgumentException('Prize shares must use one rank=percent pair per line.');
+        }
+        $rank = (int) $match[1];
+        if (array_key_exists($rank, $percentages)) {
+            throw new InvalidArgumentException('A prize rank is listed more than once.');
+        }
+        $percentages[$rank] = (int) $match[2];
+    }
+    if ($percentages && array_sum($percentages) !== 100) {
+        throw new InvalidArgumentException('Configured prize percentages must add up to exactly 100%.');
+    }
+    ksort($percentages, SORT_NUMERIC);
+    return $percentages;
 }
 
 function store_tournament_banner(?array $upload, ?string $currentPath): ?string
@@ -342,6 +367,21 @@ function handle_post_action(): never
             }
             $placementRules = parse_placement_points(post_string('placement_points', 10000, true));
             $pointsPerKill = post_int('points_per_kill', 0, 100);
+            $placementMultiplier = post_int('placement_multiplier', 0, 100);
+            $bonusMultiplier = post_int('bonus_multiplier', 0, 100);
+            $penaltyMultiplier = post_int('penalty_multiplier', 0, 100);
+            $autoPrizesEnabled = post_string('auto_prizes_enabled', 1) === '1';
+            $rankPrizePercentages = parse_rank_prize_percentages(post_string('rank_prize_percentages', 10000));
+            $killRewardPerKillMinor = money_minor(post_string('kill_reward_per_kill', 20));
+            if ($autoPrizesEnabled && $prize < 1) {
+                throw new InvalidArgumentException('Automatic prize distribution requires a prize pool greater than zero.');
+            }
+            if ($autoPrizesEnabled && !$rankPrizePercentages && $killRewardPerKillMinor < 1) {
+                throw new InvalidArgumentException('Configure rank shares or a per-kill reward before enabling automatic prizes.');
+            }
+            $rankPrizeJson = $rankPrizePercentages
+                ? json_encode($rankPrizePercentages, JSON_THROW_ON_ERROR)
+                : null;
             $tieBreakers = $_POST['tie_breakers'] ?? [];
             if (!is_array($tieBreakers)) {
                 throw new InvalidArgumentException('Tie-breaker selection is invalid.');
@@ -351,7 +391,9 @@ function handle_post_action(): never
             WalletService::atomic($db, function (PDO $db) use (
                 $admin, $id, $title, $description, $map, $mode, $teamSize, $fee, $prize,
                 $limit, $deadline, $matchTime, $roomRelease, $rules, $status, $placementRules,
-                $pointsPerKill, $tieBreakers, &$bannerPath, &$before
+                $pointsPerKill, $placementMultiplier, $bonusMultiplier, $penaltyMultiplier,
+                $autoPrizesEnabled, $rankPrizeJson, $killRewardPerKillMinor,
+                $tieBreakers, &$bannerPath, &$before
             ): void {
                 if ($id) {
                     $stmt = $db->prepare('SELECT * FROM tournaments WHERE id=? FOR UPDATE');
@@ -376,11 +418,13 @@ function handle_post_action(): never
                     $stmt = $db->prepare(
                         'UPDATE tournaments SET title=?, description=?, map_name=?, mode=?, team_size=?,
                          entry_fee_minor=?, prize_pool_minor=?, participant_limit=?, registration_deadline=?,
-                         match_time=?, room_release_at=?, rules=?, banner_path=?, status=? WHERE id=?'
+                          match_time=?, room_release_at=?, rules=?, banner_path=?, auto_prizes_enabled=?,
+                          rank_prize_percentages=?, kill_reward_per_kill_minor=?, status=? WHERE id=?'
                     );
                     $stmt->execute([
                         $title, $description, $map, $mode, $teamSize, $fee, $prize, $limit, $deadline,
-                        $matchTime, $roomRelease, $rules, $bannerPath, $status, $id,
+                        $matchTime, $roomRelease, $rules, $bannerPath, (int) $autoPrizesEnabled,
+                        $rankPrizeJson, $killRewardPerKillMinor, $status, $id,
                     ]);
                     $tournamentId = $id;
                 } else {
@@ -391,20 +435,35 @@ function handle_post_action(): never
                         'INSERT INTO tournaments
                          (slug, title, description, map_name, mode, team_size, entry_fee_minor, prize_pool_minor,
                           participant_limit, registration_deadline, match_time, room_release_at, rules, banner_path,
-                          status, tie_breakers, created_by)
-                         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)'
+                          status, tie_breakers, auto_prizes_enabled, rank_prize_percentages,
+                          kill_reward_per_kill_minor, created_by)
+                         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)'
                     );
                     $stmt->execute([
                         $slug, $title, $description, $map, $mode, $teamSize, $fee, $prize, $limit,
                         $deadline, $matchTime, $roomRelease, $rules, $bannerPath, $status,
-                        json_encode($tieBreakers, JSON_THROW_ON_ERROR), $admin['id'],
+                        json_encode($tieBreakers, JSON_THROW_ON_ERROR), (int) $autoPrizesEnabled,
+                        $rankPrizeJson, $killRewardPerKillMinor, $admin['id'],
                     ]);
                     $tournamentId = (int) $db->lastInsertId();
                 }
-                ScoringService::saveRules($tournamentId, $pointsPerKill, $placementRules, $tieBreakers, (int) $admin['id']);
+                ScoringService::saveRules(
+                    $tournamentId, $pointsPerKill, $placementRules, $tieBreakers, (int) $admin['id'],
+                    $placementMultiplier, $bonusMultiplier, $penaltyMultiplier
+                );
                 audit_log((int) $admin['id'], $id ? 'tournament.updated' : 'tournament.created', 'tournament', $tournamentId,
-                    $before ? ['title' => $before['title'], 'status' => $before['status'], 'mode' => $before['mode']] : null,
-                    ['title' => $title, 'status' => $status, 'mode' => $mode, 'team_size' => $teamSize]);
+                    $before ? [
+                        'title' => $before['title'], 'status' => $before['status'], 'mode' => $before['mode'],
+                        'auto_prizes_enabled' => (int) $before['auto_prizes_enabled'],
+                        'rank_prize_percentages' => $before['rank_prize_percentages'],
+                        'kill_reward_per_kill_minor' => (int) $before['kill_reward_per_kill_minor'],
+                    ] : null,
+                    [
+                        'title' => $title, 'status' => $status, 'mode' => $mode, 'team_size' => $teamSize,
+                        'auto_prizes_enabled' => (int) $autoPrizesEnabled,
+                        'rank_prize_percentages' => $rankPrizePercentages,
+                        'kill_reward_per_kill_minor' => $killRewardPerKillMinor,
+                    ]);
             });
             flash('success', 'Tournament and scoring rules saved.');
             redirect('index.php?page=admin-tournaments');
