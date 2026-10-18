@@ -63,6 +63,49 @@ export DB_PASSWORD="$TEST_PASSWORD"
 export RAZORPAY_WEBHOOK_SECRET="$TEST_WEBHOOK_SECRET"
 export TEST_ADMIN_EMAIL_FILE="$TEMP_DIR/admin-email"
 
+BOOTSTRAP_EMAIL="bootstrap-${SUFFIX}@example.invalid"
+BOOTSTRAP_PASSWORD="$(php -r 'echo bin2hex(random_bytes(24));')"
+if ! INITIAL_ADMIN_EMAIL="$BOOTSTRAP_EMAIL" \
+  INITIAL_ADMIN_NAME="Bootstrap Test" \
+  INITIAL_ADMIN_PASSWORD="$BOOTSTRAP_PASSWORD" \
+  php bin/create-admin.php --non-interactive >"$TEMP_DIR/admin-bootstrap.log" 2>&1; then
+  cat "$TEMP_DIR/admin-bootstrap.log" >&2
+  echo "Non-interactive admin setup failed." >&2
+  exit 1
+fi
+
+if ! TEST_BOOTSTRAP_EMAIL="$BOOTSTRAP_EMAIL" \
+  TEST_BOOTSTRAP_PASSWORD="$BOOTSTRAP_PASSWORD" \
+  php -r '
+    require "app/config.php";
+    require "app/db.php";
+    $db = Database::connection();
+    $stmt = $db->prepare(
+        "SELECT u.password_hash, u.role, p.display_name
+         FROM users u JOIN profiles p ON p.user_id = u.id
+         WHERE u.email = ?"
+    );
+    $stmt->execute([getenv("TEST_BOOTSTRAP_EMAIL")]);
+    $admin = $stmt->fetch();
+    if (!$admin || $admin["role"] !== "admin" || $admin["display_name"] !== "Bootstrap Test"
+        || !password_verify((string) getenv("TEST_BOOTSTRAP_PASSWORD"), $admin["password_hash"])) {
+        fwrite(STDERR, "Non-interactive admin setup created invalid account data.\n");
+        exit(1);
+    }
+  '; then
+  echo "Non-interactive admin setup verification failed." >&2
+  exit 1
+fi
+
+if INITIAL_ADMIN_EMAIL="$BOOTSTRAP_EMAIL" \
+  INITIAL_ADMIN_NAME="Bootstrap Test" \
+  INITIAL_ADMIN_PASSWORD="$BOOTSTRAP_PASSWORD" \
+  php bin/create-admin.php --non-interactive >"$TEMP_DIR/admin-bootstrap-second-run.log" 2>&1; then
+  echo "Non-interactive admin setup should refuse a second administrator." >&2
+  exit 1
+fi
+unset BOOTSTRAP_PASSWORD
+
 php tests/run.php
 
 php -S "127.0.0.1:$PORT" -t public public/router.php >"$TEMP_DIR/php-server.log" 2>&1 &

@@ -83,4 +83,5 @@ SQL
 mariadb --socket="$ROOT/var/run/mysql.sock" --user=root "$DB_NAME" < schema.sql
 pnpm --filter @workspace/victory-yudh run css:build
 chmod 644 "$ROOT/public/assets/app.css"
+unset INITIAL_ADMIN_EMAIL INITIAL_ADMIN_NAME INITIAL_ADMIN_PASSWORD
 php -S "0.0.0.0:$PORT" -t public public/router.php

@@ -77,6 +77,14 @@ php bin/create-admin.php
 
 Enter the first administrator's email, display name, and a unique password of at least 16 characters at the prompts. The password is hidden on an interactive terminal. The script uses a database lock and refuses to create another admin once one exists. Sign in at `index.php?page=login`, then open `index.php?page=admin`.
 
+For automated setup, the same command supports a one-time environment-based mode:
+
+```sh
+php bin/create-admin.php --non-interactive
+```
+
+Before running it, provide `INITIAL_ADMIN_EMAIL`, `INITIAL_ADMIN_NAME`, and `INITIAL_ADMIN_PASSWORD` through the process environment. The password must be at least 16 characters and must not be passed as a command-line argument, committed to a seed file, or written to shell history. In Replit, provide the password through Tools > Secrets; remove that secret after successful setup. The development server launcher clears all three bootstrap variables before starting the web server. The command removes the variables from its own environment, stores only a password hash, and preserves the same one-admin-only check and database lock as interactive mode. In either mode, the command refuses to create an admin if one already exists.
+
 Do not expose CLI output, passwords, or database credentials in support requests or logs. To grant additional admin access, use a controlled database maintenance procedure, not a public form.
 
 ## Razorpay sandbox setup
