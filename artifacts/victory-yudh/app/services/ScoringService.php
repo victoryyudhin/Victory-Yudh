@@ -548,12 +548,14 @@ final class ScoringService
         $previous = null;
         foreach ($rows as $index => &$row) {
             $sameRank = $previous !== null;
-            foreach ($rankTieBreakers as $key) {
-                $left = $key === 'best_rank' ? (int) ($previous[$key] ?? PHP_INT_MAX) : (int) $previous[$key];
-                $right = $key === 'best_rank' ? (int) ($row[$key] ?? PHP_INT_MAX) : (int) $row[$key];
-                if ($left !== $right) {
-                    $sameRank = false;
-                    break;
+            if ($sameRank) {
+                foreach ($rankTieBreakers as $key) {
+                    $left = $key === 'best_rank' ? (int) ($previous[$key] ?? PHP_INT_MAX) : (int) $previous[$key];
+                    $right = $key === 'best_rank' ? (int) ($row[$key] ?? PHP_INT_MAX) : (int) $row[$key];
+                    if ($left !== $right) {
+                        $sameRank = false;
+                        break;
+                    }
                 }
             }
             if (!$sameRank) {

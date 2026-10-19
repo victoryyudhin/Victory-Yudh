@@ -126,9 +126,14 @@ function render_page(): array
                 $roomId = decrypt_private_value($tournament['room_id_enc'], $tournament['room_id_iv'], $tournament['room_id_tag']);
                 $roomPassword = decrypt_private_value($tournament['room_password_enc'], $tournament['room_password_iv'], $tournament['room_password_tag']);
             }
-            $stmt = $db->prepare('SELECT points_per_kill FROM scoring_rules WHERE tournament_id=? AND placement_rank=0 AND active=1');
+            $stmt = $db->prepare(
+                'SELECT points_per_kill, placement_multiplier, bonus_multiplier, penalty_multiplier
+                 FROM scoring_rules WHERE tournament_id=? AND placement_rank=0 AND active=1'
+            );
             $stmt->execute([$tournament['id']]);
-            $killPoints = (int) ($stmt->fetchColumn() ?: 0);
+            $scoringFormula = $stmt->fetch() ?: [
+                'points_per_kill' => 0, 'placement_multiplier' => 1, 'bonus_multiplier' => 1, 'penalty_multiplier' => 1,
+            ];
             $pageTitle = $tournament['title'];
             $contentFile = 'tournament';
             break;
@@ -411,22 +416,48 @@ function render_page(): array
             } elseif ($page === 'admin-tournament-edit') {
                 $id = filter_var($_GET['id'] ?? null, FILTER_VALIDATE_INT);
                 $tournament = null;
-                $scoring = ['points_per_kill' => 1, 'placement_text' => "1=12\n2=9\n3=8\n4=7\n5=6\n6=5\n7=4\n8=3\n9=2\n10=1", 'tie_breakers' => ['total_points','total_kills','placement_points','best_rank','registration_time']];
+                $scoring = [
+                    'points_per_kill' => 1, 'placement_multiplier' => 1, 'bonus_multiplier' => 1, 'penalty_multiplier' => 1,
+                    'placement_text' => "1=12\n2=9\n3=8\n4=7\n5=6\n6=5\n7=4\n8=3\n9=2\n10=1",
+                    'tie_breakers' => ['total_points','total_kills','placement_points','best_rank','registration_time'],
+                    'auto_prizes_enabled' => false, 'rank_prize_text' => "1=50\n2=30\n3=20",
+                    'kill_reward_per_kill' => '0.00',
+                ];
                 if ($id) {
                     $stmt = $db->prepare('SELECT * FROM tournaments WHERE id=?');
                     $stmt->execute([$id]);
                     $tournament = $stmt->fetch();
                     if (!$tournament) return ['not_found' => true];
-                    $stmt = $db->prepare('SELECT placement_rank, placement_points, points_per_kill, tie_breakers FROM scoring_rules WHERE tournament_id=? AND placement_rank>0 AND active=1 ORDER BY placement_rank');
+                    $stmt = $db->prepare(
+                        'SELECT placement_rank, placement_points, points_per_kill, placement_multiplier,
+                                bonus_multiplier, penalty_multiplier, tie_breakers
+                         FROM scoring_rules WHERE tournament_id=? AND active=1 ORDER BY placement_rank'
+                    );
                     $stmt->execute([$id]);
                     $rules = $stmt->fetchAll();
                     if ($rules) {
                         $scoring['points_per_kill'] = (int) $rules[0]['points_per_kill'];
-                        $scoring['placement_text'] = implode("\n", array_map(fn($rule) => $rule['placement_rank'] . '=' . $rule['placement_points'], $rules));
+                        $scoring['placement_multiplier'] = (int) $rules[0]['placement_multiplier'];
+                        $scoring['bonus_multiplier'] = (int) $rules[0]['bonus_multiplier'];
+                        $scoring['penalty_multiplier'] = (int) $rules[0]['penalty_multiplier'];
+                        $placementRules = array_filter($rules, static fn(array $rule): bool => (int) $rule['placement_rank'] > 0);
+                        if ($placementRules) {
+                            $scoring['placement_text'] = implode("\n", array_map(fn($rule) => $rule['placement_rank'] . '=' . $rule['placement_points'], $placementRules));
+                        }
                     }
-                    $stmt = $db->prepare('SELECT tie_breakers FROM tournaments WHERE id=?');
-                    $stmt->execute([$id]);
-                    $scoring['tie_breakers'] = ScoringService::decodeTieBreakers((string)$stmt->fetchColumn());
+                    $scoring['tie_breakers'] = ScoringService::decodeTieBreakers((string) ($rules[0]['tie_breakers'] ?? null));
+                    $prizePercentages = json_decode((string) ($tournament['rank_prize_percentages'] ?? ''), true);
+                    if (is_array($prizePercentages)) {
+                        $scoring['rank_prize_text'] = implode("\n", array_map(
+                            static fn($rank, $percent): string => $rank . '=' . $percent,
+                            array_keys($prizePercentages),
+                            array_values($prizePercentages)
+                        ));
+                    } else {
+                        $scoring['rank_prize_text'] = '';
+                    }
+                    $scoring['auto_prizes_enabled'] = (bool) $tournament['auto_prizes_enabled'];
+                    $scoring['kill_reward_per_kill'] = format_money_input((int) $tournament['kill_reward_per_kill_minor']);
                 }
                 $contentFile = 'admin/tournament-edit';
             } elseif ($page === 'admin-room') {
@@ -439,7 +470,11 @@ function render_page(): array
                 $roomPassword = decrypt_private_value($tournament['room_password_enc'], $tournament['room_password_iv'], $tournament['room_password_tag']);
                 $contentFile = 'admin/room';
             } elseif ($page === 'admin-results') {
-                $tournamentOptions = $db->query('SELECT id,title,mode,results_status FROM tournaments ORDER BY match_time DESC LIMIT 100')->fetchAll();
+                $tournamentOptions = $db->query(
+                    'SELECT id,title,mode,results_status,prize_pool_minor,auto_prizes_enabled,
+                            rank_prize_percentages,kill_reward_per_kill_minor,payouts_locked_at
+                     FROM tournaments ORDER BY match_time DESC LIMIT 100'
+                )->fetchAll();
                 $requested = filter_var($_GET['id'] ?? null, FILTER_VALIDATE_INT);
                 $selectedTournament = null;
                 foreach ($tournamentOptions as $option) {
@@ -453,7 +488,13 @@ function render_page(): array
                 }
                 $registrations = $leaderboard = [];
                 $pointsPerKill = 1;
+                $formulaSettings = [
+                    'points_per_kill' => 1, 'placement_multiplier' => 1, 'bonus_multiplier' => 1,
+                    'penalty_multiplier' => 1, 'placement_text' => "1=12\n2=9\n3=8\n4=7\n5=6",
+                    'tie_breakers' => ['total_points','total_kills','placement_points','best_rank','registration_time'],
+                ];
                 $activeMatchNumber = 1;
+                $existingMatchResults = [];
                 if ($selectedTournament) {
                     $stmt = $db->prepare(
                         'SELECT r.id,r.captain_id,t.name AS team_name,p.display_name,COUNT(rm.user_id) AS member_count
@@ -468,12 +509,44 @@ function render_page(): array
                     foreach ($registrations as &$entry) $entry['entry_name'] = $entry['team_name'] ?: $entry['display_name'];
                     unset($entry);
                     $leaderboard = ScoringService::leaderboard((int) $selectedTournament['id']);
-                    $stmt = $db->prepare('SELECT points_per_kill FROM scoring_rules WHERE tournament_id=? AND placement_rank=0 AND active=1');
+                    $stmt = $db->prepare(
+                        'SELECT placement_rank,placement_points,points_per_kill,placement_multiplier,
+                                bonus_multiplier,penalty_multiplier,tie_breakers
+                         FROM scoring_rules WHERE tournament_id=? AND active=1 ORDER BY placement_rank'
+                    );
                     $stmt->execute([$selectedTournament['id']]);
-                    $pointsPerKill = (int) ($stmt->fetchColumn() ?: 1);
+                    $resultRules = $stmt->fetchAll();
+                    if ($resultRules) {
+                        $formulaSettings['points_per_kill'] = (int) $resultRules[0]['points_per_kill'];
+                        $formulaSettings['placement_multiplier'] = (int) $resultRules[0]['placement_multiplier'];
+                        $formulaSettings['bonus_multiplier'] = (int) $resultRules[0]['bonus_multiplier'];
+                        $formulaSettings['penalty_multiplier'] = (int) $resultRules[0]['penalty_multiplier'];
+                        $placementRules = array_filter($resultRules, static fn(array $rule): bool => (int) $rule['placement_rank'] > 0);
+                        if ($placementRules) {
+                            $formulaSettings['placement_text'] = implode("\n", array_map(
+                                fn($rule) => $rule['placement_rank'] . '=' . $rule['placement_points'],
+                                $placementRules
+                            ));
+                        }
+                        $formulaSettings['tie_breakers'] = ScoringService::decodeTieBreakers((string) $resultRules[0]['tie_breakers']);
+                    }
+                    $pointsPerKill = $formulaSettings['points_per_kill'];
                     $stmt = $db->prepare('SELECT COALESCE(MAX(match_number),0)+1 FROM matches WHERE tournament_id=?');
                     $stmt->execute([$selectedTournament['id']]);
-                    $activeMatchNumber = (int) $stmt->fetchColumn();
+                    $nextMatchNumber = min(100, (int) $stmt->fetchColumn());
+                    $requestedMatchNumber = filter_var($_GET['match_number'] ?? null, FILTER_VALIDATE_INT);
+                    $activeMatchNumber = $requestedMatchNumber !== false && $requestedMatchNumber >= 1 && $requestedMatchNumber <= 100
+                        ? $requestedMatchNumber
+                        : $nextMatchNumber;
+                    $stmt = $db->prepare(
+                        'SELECT r.registration_id,r.placement_rank,r.kills,r.bonus_input,r.penalty_input
+                         FROM results r JOIN matches m ON m.id=r.match_id
+                         WHERE r.tournament_id=? AND m.match_number=?'
+                    );
+                    $stmt->execute([$selectedTournament['id'], $activeMatchNumber]);
+                    foreach ($stmt->fetchAll() as $result) {
+                        $existingMatchResults[(int) $result['registration_id']] = $result;
+                    }
                 }
                 $contentFile = 'admin/results';
             } elseif ($page === 'admin-users') {

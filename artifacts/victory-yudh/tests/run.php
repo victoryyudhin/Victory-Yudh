@@ -111,6 +111,7 @@ run_case('MariaDB migration creates core tables and records its version', functi
         check(in_array($table, $tables, true), 'Missing table ' . $table);
     }
     check((string) $db->query('SELECT version FROM schema_migrations WHERE version=\'001_initial\'')->fetchColumn() === '001_initial', 'Initial migration version missing.');
+    check((string) $db->query('SELECT version FROM schema_migrations WHERE version=\'002_scoring_and_prize_rules\'')->fetchColumn() === '002_scoring_and_prize_rules', 'Scoring and prize migration version missing.');
 });
 
 run_case('authentication uses password hashes and verifies correct/incorrect passwords', function () use ($db, $context): void {
@@ -226,6 +227,55 @@ run_case('rank-and-kill formula, multi-match totals, and leaderboard ranking wor
     $rows = ScoringService::leaderboard($tournamentId);
     check((int)$rows[0]['registration_id'] === $registrationB && (int)$rows[0]['total_points'] === 37, 'Multi-match aggregate ranking was wrong.');
     check((int)$rows[0]['matches_played'] === 2 && (int)$rows[0]['total_kills'] === 8, 'Multi-match kills or match count did not aggregate.');
+});
+
+run_case('bulk results apply weighted formulas, distribute rank and kill prizes, and lock after payout', function () use ($db, $context): void {
+    $tournamentId = create_fixture_tournament($context['admin'], 'test-bulk-payout-' . bin2hex(random_bytes(3)), 'solo', 2, 0);
+    $db->prepare(
+        'UPDATE tournaments
+         SET prize_pool_minor=10000, auto_prizes_enabled=1,
+             rank_prize_percentages=?, kill_reward_per_kill_minor=100
+         WHERE id=?'
+    )->execute([json_encode([1=>70,2=>30], JSON_THROW_ON_ERROR), $tournamentId]);
+    $registrationA = TournamentService::register($context['score_a'], $tournamentId, null);
+    $registrationB = TournamentService::register($context['score_b'], $tournamentId, null);
+    ScoringService::saveRules(
+        $tournamentId, 2, [1=>12,2=>9],
+        ['total_points','total_kills','placement_points','best_rank','registration_time'],
+        $context['admin'], 2, 3, 2
+    );
+    $rows = [
+        ['registration_id'=>$registrationA,'placement_rank'=>1,'kills'=>2,'bonus_points'=>3,'penalty_points'=>1],
+        ['registration_id'=>$registrationB,'placement_rank'=>2,'kills'=>1,'bonus_points'=>0,'penalty_points'=>0],
+    ];
+    expect_exception(DomainException::class, fn() => ScoringService::saveResultsBulk($tournamentId, 1, [$rows[0]], $context['admin']));
+    check((int) $db->query('SELECT COUNT(*) FROM results WHERE tournament_id=' . (int) $tournamentId)->fetchColumn() === 0, 'Incomplete bulk submission wrote partial results.');
+    check(ScoringService::saveResultsBulk($tournamentId, 1, $rows, $context['admin']) === 2, 'Bulk save did not report both entries.');
+    $stmt = $db->prepare(
+        'SELECT placement_points,kill_points,bonus_input,penalty_input,bonus_points,penalty_points,total_points
+         FROM results WHERE tournament_id=? AND registration_id=?'
+    );
+    $stmt->execute([$tournamentId, $registrationA]);
+    $result = $stmt->fetch();
+    check(
+        (int) $result['placement_points'] === 24 && (int) $result['kill_points'] === 4 &&
+        (int) $result['bonus_input'] === 3 && (int) $result['penalty_input'] === 1 &&
+        (int) $result['bonus_points'] === 9 && (int) $result['penalty_points'] === 2 &&
+        (int) $result['total_points'] === 35,
+        'Weighted formula inputs or total were calculated incorrectly.'
+    );
+    $balanceA = (int) WalletService::balance($context['score_a'])['balance_minor'];
+    $balanceB = (int) WalletService::balance($context['score_b'])['balance_minor'];
+    ScoringService::publish($tournamentId, 'final', $context['admin']);
+    check((int) WalletService::balance($context['score_a'])['balance_minor'] === $balanceA + 6990, 'Rank and kill rewards for first place were not credited correctly.');
+    check((int) WalletService::balance($context['score_b'])['balance_minor'] === $balanceB + 3010, 'Rank and kill rewards for second place were not credited correctly.');
+    $stmt = $db->prepare('SELECT payouts_locked_at FROM tournaments WHERE id=?');
+    $stmt->execute([$tournamentId]);
+    check($stmt->fetchColumn() !== null, 'Payout timestamp was not recorded.');
+    expect_exception(DomainException::class, fn() => ScoringService::saveResult($tournamentId, 1, $registrationA, 1, 3, 0, 0, $context['admin']));
+    expect_exception(DomainException::class, fn() => ScoringService::saveRules($tournamentId, 2, [1=>10], ['total_points'], $context['admin']));
+    expect_exception(DomainException::class, fn() => ScoringService::recalculate($tournamentId, $context['admin']));
+    expect_exception(DomainException::class, fn() => ScoringService::publish($tournamentId, 'provisional', $context['admin']));
 });
 
 run_case('final result corrections become provisional and recalculation preserves totals', function () use (&$context): void {

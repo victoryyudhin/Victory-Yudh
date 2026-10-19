@@ -508,6 +508,42 @@ function handle_post_action(): never
             flash('success', 'Result saved and leaderboard recalculated.');
             redirect('index.php?page=admin-results&id=' . post_int('tournament_id', 1));
         }
+        case 'admin-results-bulk-save': {
+            $admin = require_admin();
+            $tournamentId = post_int('tournament_id', 1);
+            $matchNumber = post_int('match_number', 1, 100);
+            $encodedRows = post_string('results_json', 500000, true);
+            try {
+                $rows = json_decode($encodedRows, true, 512, JSON_THROW_ON_ERROR);
+            } catch (JsonException) {
+                throw new InvalidArgumentException('Bulk result data could not be read. Please review the table and try again.');
+            }
+            if (!is_array($rows) || !array_is_list($rows)) {
+                throw new InvalidArgumentException('Bulk result data must be a list of player or team rows.');
+            }
+            $count = ScoringService::saveResultsBulk($tournamentId, $matchNumber, $rows, (int) $admin['id']);
+            flash('success', $count . ' player/team results saved and the leaderboard recalculated.');
+            redirect('index.php?page=admin-results&id=' . $tournamentId . '&match_number=' . $matchNumber);
+        }
+        case 'admin-scoring-save': {
+            $admin = require_admin();
+            $tournamentId = post_int('tournament_id', 1);
+            $placementRules = parse_placement_points(post_string('placement_points', 10000, true));
+            $pointsPerKill = post_int('points_per_kill', 0, 100);
+            $placementMultiplier = post_int('placement_multiplier', 0, 100);
+            $bonusMultiplier = post_int('bonus_multiplier', 0, 100);
+            $penaltyMultiplier = post_int('penalty_multiplier', 0, 100);
+            $tieBreakers = $_POST['tie_breakers'] ?? [];
+            if (!is_array($tieBreakers)) {
+                throw new InvalidArgumentException('Tie-breaker selection is invalid.');
+            }
+            ScoringService::saveRules(
+                $tournamentId, $pointsPerKill, $placementRules, $tieBreakers, (int) $admin['id'],
+                $placementMultiplier, $bonusMultiplier, $penaltyMultiplier
+            );
+            flash('success', 'Scoring formula saved and existing results recalculated.');
+            redirect('index.php?page=admin-results&id=' . $tournamentId);
+        }
         case 'admin-results-import': {
             $admin = require_admin();
             $tournamentId = post_int('tournament_id', 1);
@@ -588,10 +624,14 @@ function handle_post_action(): never
                 throw new InvalidArgumentException('Prize credit must be greater than zero.');
             }
             WalletService::atomic($db, function (PDO $db) use ($admin, $tournamentId, $registrationId, $amount): void {
-                $stmt = $db->prepare('SELECT results_status FROM tournaments WHERE id=? FOR UPDATE');
+                $stmt = $db->prepare('SELECT results_status, auto_prizes_enabled FROM tournaments WHERE id=? FOR UPDATE');
                 $stmt->execute([$tournamentId]);
-                if ($stmt->fetchColumn() !== 'final') {
+                $tournament = $stmt->fetch();
+                if (!$tournament || $tournament['results_status'] !== 'final') {
                     throw new DomainException('Finalize results before crediting a prize.');
+                }
+                if ((int) $tournament['auto_prizes_enabled'] === 1) {
+                    throw new DomainException('This tournament uses automatic prize distribution; manual credits are disabled to prevent duplicate payouts.');
                 }
                 $leaderboard = ScoringService::leaderboard($tournamentId);
                 $found = null;
