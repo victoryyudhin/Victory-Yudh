@@ -9,7 +9,7 @@ function fallback_for_action(string $action): string
         'login' => 'index.php?page=login',
         'profile-save', 'password-change' => 'index.php?page=profile',
         'team-create', 'team-invite', 'invitation-response', 'team-remove' => 'index.php?page=team',
-        'withdraw-request', 'deposit-order', 'payment-verify' => 'index.php?page=wallet',
+        'withdraw-request', 'deposit-request' => 'index.php?page=wallet',
         'support-submit' => 'index.php?page=support',
         'admin-tournament-save' => 'index.php?page=admin-tournaments',
         'admin-room-save' => 'index.php?page=admin-room&id=' . max(0, (int) $tournamentId),
@@ -19,7 +19,8 @@ function fallback_for_action(string $action): string
         'admin-withdraw-review' => 'index.php?page=admin-withdrawals',
         'admin-user-toggle' => 'index.php?page=admin-users',
         'admin-team-remove-member' => 'index.php?page=admin-teams',
-        'admin-payment-refund' => 'index.php?page=admin-wallet',
+        'admin-deposit-review', 'admin-wallet-adjust' => 'index.php?page=admin-wallet',
+        'admin-notification-send' => 'index.php?page=admin-notifications',
         'admin-announcement-save', 'admin-announcement-toggle' => 'index.php?page=admin-announcements',
         'admin-support-status' => 'index.php?page=admin-support',
         'admin-settings-save' => 'index.php?page=admin-settings',
@@ -121,6 +122,34 @@ function store_tournament_banner(?array $upload, ?string $currentPath): ?string
     $filename = bin2hex(random_bytes(18)) . '.' . $extensions[$mime];
     if (!move_uploaded_file($tmp, $directory . '/' . $filename)) {
         throw new RuntimeException('The banner could not be saved.');
+    }
+    return 'uploads/' . $filename;
+}
+
+function store_deposit_qr(?array $upload, ?string $currentPath): ?string
+{
+    if (!$upload || ($upload['error'] ?? UPLOAD_ERR_NO_FILE) === UPLOAD_ERR_NO_FILE) {
+        return $currentPath;
+    }
+    if (($upload['error'] ?? UPLOAD_ERR_OK) !== UPLOAD_ERR_OK || (int) ($upload['size'] ?? 0) > 2 * 1024 * 1024) {
+        throw new InvalidArgumentException('Deposit QR image must be smaller than 2 MB.');
+    }
+    $tmp = $upload['tmp_name'] ?? '';
+    if (!is_string($tmp) || !is_uploaded_file($tmp)) {
+        throw new InvalidArgumentException('Deposit QR image could not be verified.');
+    }
+    $mime = (new finfo(FILEINFO_MIME_TYPE))->file($tmp);
+    $extensions = ['image/jpeg' => 'jpg', 'image/png' => 'png', 'image/webp' => 'webp'];
+    if (!isset($extensions[$mime]) || @getimagesize($tmp) === false) {
+        throw new InvalidArgumentException('Use a valid JPEG, PNG, or WebP QR image.');
+    }
+    $directory = dirname(__DIR__) . '/public/uploads';
+    if (!is_dir($directory) && !mkdir($directory, 0750, true) && !is_dir($directory)) {
+        throw new RuntimeException('Upload storage is not available.');
+    }
+    $filename = 'deposit-qr-' . bin2hex(random_bytes(18)) . '.' . $extensions[$mime];
+    if (!move_uploaded_file($tmp, $directory . '/' . $filename)) {
+        throw new RuntimeException('The QR image could not be saved.');
     }
     return 'uploads/' . $filename;
 }
@@ -298,25 +327,14 @@ function handle_post_action(): never
             flash('success', 'Withdrawal submitted. Funds are reserved pending review.');
             redirect('index.php?page=wallet');
         }
-        case 'deposit-order': {
+        case 'deposit-request': {
             $user = require_auth();
             $amount = money_minor(post_string('amount_rupees', 20, true));
-            $order = PaymentGateway::createOrder((int) $user['id'], $amount);
-            $_SESSION['payment_order_id'] = $order['id'];
-            $_SESSION['payment_provider_order_id'] = $order['provider_order_id'];
-            flash('success', 'Payment order created securely.');
-            redirect('index.php?page=checkout');
-        }
-        case 'payment-verify': {
-            $user = require_auth();
-            $localId = post_int('local_order_id', 1);
-            $providerOrder = post_string('razorpay_order_id', 100, true);
-            $paymentId = post_string('razorpay_payment_id', 100, true);
-            $signature = post_string('razorpay_signature', 256, true);
-            $status = PaymentGateway::verifyReturn((int) $user['id'], $localId, $providerOrder, $paymentId, $signature);
-            unset($_SESSION['payment_order_id'], $_SESSION['payment_provider_order_id']);
-            flash($status === 'captured' ? 'success' : 'error', $status === 'captured' ? 'Payment verified and wallet credited.' : 'Payment is authorized but not captured yet. The wallet was not credited.');
-            redirect('index.php?page=payment-status&id=' . $localId);
+            $nonce = post_string('deposit_nonce', 32, true);
+            DepositService::request((int) $user['id'], $amount, post_string('utr_number', 120, true), $nonce);
+            $_SESSION['_deposit_nonce'] = bin2hex(random_bytes(16));
+            flash('success', 'Deposit request submitted. Wallet credit is pending admin verification.');
+            redirect('index.php?page=wallet');
         }
         case 'notification-read': {
             $user = require_auth();
@@ -503,7 +521,8 @@ function handle_post_action(): never
                 post_int('kills', 0, 1000),
                 post_int('bonus_points', 0, 10000),
                 post_int('penalty_points', 0, 10000),
-                (int) $admin['id']
+                (int) $admin['id'],
+                post_string('match_note', 500)
             );
             flash('success', 'Result saved and leaderboard recalculated.');
             redirect('index.php?page=admin-results&id=' . post_int('tournament_id', 1));
@@ -521,7 +540,13 @@ function handle_post_action(): never
             if (!is_array($rows) || !array_is_list($rows)) {
                 throw new InvalidArgumentException('Bulk result data must be a list of player or team rows.');
             }
-            $count = ScoringService::saveResultsBulk($tournamentId, $matchNumber, $rows, (int) $admin['id']);
+            $count = ScoringService::saveResultsBulk(
+                $tournamentId,
+                $matchNumber,
+                $rows,
+                (int) $admin['id'],
+                post_string('match_note', 500)
+            );
             flash('success', $count . ' player/team results saved and the leaderboard recalculated.');
             redirect('index.php?page=admin-results&id=' . $tournamentId . '&match_number=' . $matchNumber);
         }
@@ -557,20 +582,23 @@ function handle_post_action(): never
                 throw new InvalidArgumentException('CSV could not be read.');
             }
             $header = fgetcsv($handle);
-            $expectedHeader = ['match_number','registration_id','placement_rank','kills','bonus_points','penalty_points'];
-            if (!is_array($header) || array_map(static fn($value) => trim((string) $value), $header) !== $expectedHeader) {
+            $baseHeader = ['match_number','registration_id','placement_rank','kills','bonus_points','penalty_points'];
+            $header = is_array($header) ? array_map(static fn($value) => trim((string) $value), $header) : [];
+            $hasMatchNote = $header === [...$baseHeader, 'match_note'];
+            if ($header !== $baseHeader && !$hasMatchNote) {
                 fclose($handle);
-                throw new InvalidArgumentException('CSV header must be match_number,registration_id,placement_rank,kills,bonus_points,penalty_points.');
+                throw new InvalidArgumentException('CSV header must contain the six result columns, optionally followed by match_note.');
             }
             $rows = [];
             $unique = [];
+            $notesByMatch = [];
             while (($csv = fgetcsv($handle)) !== false) {
-                if (count($rows) >= 300 || count($csv) !== 6) {
+                if (count($rows) >= 300 || count($csv) !== ($hasMatchNote ? 7 : 6)) {
                     fclose($handle);
                     throw new InvalidArgumentException('CSV must contain no more than 300 complete rows.');
                 }
                 $numbers = [];
-                foreach ($csv as $value) {
+                foreach (array_slice($csv, 0, 6) as $value) {
                     if (!preg_match('/^(0|[1-9][0-9]{0,4})$/', trim((string) $value))) {
                         fclose($handle);
                         throw new InvalidArgumentException('Every CSV value must be a non-negative integer.');
@@ -588,15 +616,35 @@ function handle_post_action(): never
                     throw new InvalidArgumentException('CSV contains the same entry and match more than once.');
                 }
                 $unique[$key] = true;
-                $rows[] = [$matchNo,$registrationId,$rank,$kills,$bonus,$penalty];
+                $matchNote = $hasMatchNote ? trim((string) ($csv[6] ?? '')) : null;
+                if ($matchNote !== null && mb_strlen($matchNote) > 500) {
+                    fclose($handle);
+                    throw new InvalidArgumentException('Match notes in the CSV must be 500 characters or fewer.');
+                }
+                if (array_key_exists($matchNo, $notesByMatch) && $notesByMatch[$matchNo] !== $matchNote) {
+                    fclose($handle);
+                    throw new InvalidArgumentException('Every row for a match must use the same match_note.');
+                }
+                $notesByMatch[$matchNo] = $matchNote;
+                $rows[] = [$matchNo,$registrationId,$rank,$kills,$bonus,$penalty,$matchNote];
             }
             fclose($handle);
             if (!$rows) {
                 throw new InvalidArgumentException('CSV has no result rows.');
             }
             WalletService::atomic($db, function () use ($rows, $tournamentId, $admin): void {
-                foreach ($rows as [$matchNo,$registrationId,$rank,$kills,$bonus,$penalty]) {
-                    ScoringService::saveResult($tournamentId, $matchNo, $registrationId, $rank, $kills, $bonus, $penalty, (int) $admin['id']);
+                foreach ($rows as [$matchNo,$registrationId,$rank,$kills,$bonus,$penalty,$matchNote]) {
+                    ScoringService::saveResult(
+                        $tournamentId,
+                        $matchNo,
+                        $registrationId,
+                        $rank,
+                        $kills,
+                        $bonus,
+                        $penalty,
+                        (int) $admin['id'],
+                        $matchNote
+                    );
                 }
             });
             flash('success', count($rows) . ' result rows imported and validated.');
@@ -619,11 +667,14 @@ function handle_post_action(): never
             $admin = require_admin();
             $tournamentId = post_int('tournament_id', 1);
             $registrationId = post_int('registration_id', 1);
+            $recipientUserId = post_int('recipient_user_id', 1);
             $amount = money_minor(post_string('amount_rupees', 20, true));
             if ($amount < 1) {
                 throw new InvalidArgumentException('Prize credit must be greater than zero.');
             }
-            WalletService::atomic($db, function (PDO $db) use ($admin, $tournamentId, $registrationId, $amount): void {
+            WalletService::atomic($db, function (PDO $db) use (
+                $admin, $tournamentId, $registrationId, $recipientUserId, $amount
+            ): void {
                 $stmt = $db->prepare('SELECT results_status, auto_prizes_enabled FROM tournaments WHERE id=? FOR UPDATE');
                 $stmt->execute([$tournamentId]);
                 $tournament = $stmt->fetch();
@@ -644,27 +695,55 @@ function handle_post_action(): never
                 if (!$found) {
                     throw new DomainException('Prize entry has no result in this tournament.');
                 }
-                $stmt = $db->prepare('SELECT captain_id FROM registrations WHERE id=? AND tournament_id=? AND status=\'confirmed\'');
-                $stmt->execute([$registrationId, $tournamentId]);
-                $captainId = (int) $stmt->fetchColumn();
-                if ($captainId < 1) {
-                    throw new DomainException('Prize recipient is not active.');
-                }
-                WalletService::post(
-                    $db, $captainId, 'prize', $amount, $amount, 0,
-                    'prize:' . $tournamentId . ':' . $registrationId,
-                    'tournament', $tournamentId, 'Final tournament prize · position #' . $found['position']
+                $stmt = $db->prepare(
+                    'SELECT u.email, p.display_name
+                     FROM registration_members rm
+                     JOIN registrations r ON r.id=rm.registration_id AND r.tournament_id=rm.tournament_id
+                     JOIN users u ON u.id=rm.user_id
+                     LEFT JOIN profiles p ON p.user_id=u.id
+                     WHERE rm.registration_id=? AND rm.tournament_id=? AND rm.user_id=? AND r.status=\'confirmed\''
                 );
-                $stmt = $db->prepare('SELECT user_id FROM registration_members WHERE registration_id=?');
-                $stmt->execute([$registrationId]);
-                foreach ($stmt->fetchAll(PDO::FETCH_COLUMN) as $memberId) {
-                    notify_user((int) $memberId, 'prize', 'Tournament prize credited', format_money($amount) . ' was credited to the team captain’s wallet for a final result.', 'index.php?page=wallet');
+                $stmt->execute([$registrationId, $tournamentId, $recipientUserId]);
+                $recipient = $stmt->fetch();
+                if (!$recipient) {
+                    throw new DomainException('Prize recipient must be a joined player on this result entry.');
                 }
+                $stmt = $db->prepare(
+                    'SELECT id FROM wallet_transactions WHERE idempotency_key=?'
+                );
+                $stmt->execute(['prize:' . $tournamentId . ':' . $registrationId]);
+                if ($stmt->fetchColumn()) {
+                    throw new DomainException('This registration already has a legacy captain prize credit. Review the ledger before issuing another prize.');
+                }
+                $recipientName = trim((string) ($recipient['display_name'] ?? ''));
+                WalletService::post(
+                    $db,
+                    $recipientUserId,
+                    'prize',
+                    $amount,
+                    $amount,
+                    0,
+                    'manual-prize:' . $tournamentId . ':' . $registrationId . ':' . $recipientUserId,
+                    'tournament',
+                    $tournamentId,
+                    'Manual final tournament prize · position #' . $found['position']
+                );
+                notify_user(
+                    $recipientUserId,
+                    'prize',
+                    'Tournament prize credited',
+                    format_money($amount) . ' was credited to your wallet for position #' . $found['position'] . '.',
+                    'index.php?page=wallet'
+                );
                 audit_log((int) $admin['id'], 'tournament.prize_credited', 'registration', $registrationId, null, [
-                    'tournament_id' => $tournamentId, 'position' => $found['position'], 'amount_minor' => $amount,
+                    'tournament_id' => $tournamentId,
+                    'recipient_user_id' => $recipientUserId,
+                    'recipient_email' => $recipient['email'],
+                    'position' => $found['position'],
+                    'amount_minor' => $amount,
                 ]);
             });
-            flash('success', 'Prize credit posted to the captain’s wallet.');
+            flash('success', 'Prize credit posted to the selected player’s wallet.');
             redirect('index.php?page=admin-results&id=' . $tournamentId);
         }
         case 'admin-cancel-tournament': {
@@ -701,6 +780,127 @@ function handle_post_action(): never
             flash('success', 'Withdrawal status updated. Payout is only marked paid after an admin enters its confirmed reference.');
             redirect('index.php?page=admin-withdrawals');
         }
+        case 'admin-deposit-review': {
+            $admin = require_admin();
+            DepositService::review(
+                post_int('deposit_request_id', 1),
+                (int) $admin['id'],
+                post_string('decision', 12, true),
+                post_string('note', 255)
+            );
+            flash('success', 'Deposit request reviewed. Only approved requests are credited.');
+            redirect('index.php?page=admin-wallet');
+        }
+        case 'admin-wallet-adjust': {
+            $admin = require_admin();
+            $userId = post_int('user_id', 1);
+            $direction = post_string('direction', 8, true);
+            $amount = money_minor(post_string('amount_rupees', 20, true));
+            $reason = post_string('reason', 255, true);
+            $nonce = post_string('adjustment_nonce', 32, true);
+            if (!in_array($direction, ['credit', 'debit'], true) || $amount < 1 ||
+                !preg_match('/^[a-f0-9]{32}$/', $nonce)) {
+                throw new InvalidArgumentException('Choose a valid credit or debit amount.');
+            }
+            $key = 'admin-wallet-adjust:' . $admin['id'] . ':' . $nonce;
+            WalletService::atomic($db, function (PDO $db) use (
+                $admin, $userId, $direction, $amount, $reason, $key
+            ): void {
+                $stmt = $db->prepare('SELECT email, status FROM users WHERE id=? FOR UPDATE');
+                $stmt->execute([$userId]);
+                $target = $stmt->fetch();
+                if (!$target) {
+                    throw new DomainException('Wallet account not found.');
+                }
+                $delta = $direction === 'credit' ? $amount : -$amount;
+                WalletService::post(
+                    $db,
+                    $userId,
+                    'admin_adjustment',
+                    $amount,
+                    $delta,
+                    0,
+                    $key,
+                    'admin_adjustment',
+                    $userId,
+                    mb_substr($reason, 0, 255)
+                );
+                notify_user(
+                    $userId,
+                    'wallet',
+                    $direction === 'credit' ? 'Wallet credited by admin' : 'Wallet debit recorded',
+                    format_money($amount) . ' was ' . ($direction === 'credit' ? 'added to' : 'deducted from') .
+                        ' your wallet. Reason: ' . mb_substr($reason, 0, 300),
+                    'index.php?page=wallet'
+                );
+                audit_log((int) $admin['id'], 'wallet.admin_adjusted', 'user', $userId, null, [
+                    'direction' => $direction,
+                    'amount_minor' => $amount,
+                    'available_delta_minor' => $delta,
+                    'reason' => $reason,
+                    'account_status' => $target['status'],
+                ]);
+            });
+            $_SESSION['_wallet_adjustment_nonce'] = bin2hex(random_bytes(16));
+            flash('success', 'Wallet ' . ($direction === 'credit' ? 'credit' : 'debit') . ' posted to the ledger.');
+            redirect('index.php?page=admin-wallet');
+        }
+        case 'admin-notification-send': {
+            $admin = require_admin();
+            $targetMode = post_string('target_mode', 12, true);
+            $title = post_string('title', 120, true);
+            $body = post_string('body', 500, true);
+            $recipientIds = [];
+            if ($targetMode === 'all') {
+                $stmt = $db->query("SELECT id FROM users WHERE role='user' AND status='active' ORDER BY id");
+                $recipientIds = array_map('intval', $stmt->fetchAll(PDO::FETCH_COLUMN));
+            } elseif ($targetMode === 'selected') {
+                $rawIds = $_POST['user_ids'] ?? [];
+                if (!is_array($rawIds) || count($rawIds) < 1 || count($rawIds) > 200) {
+                    throw new InvalidArgumentException('Select between 1 and 200 active users.');
+                }
+                foreach ($rawIds as $rawId) {
+                    $id = filter_var($rawId, FILTER_VALIDATE_INT);
+                    if (!$id || $id < 1) {
+                        throw new InvalidArgumentException('One or more selected users are invalid.');
+                    }
+                    $recipientIds[] = (int) $id;
+                }
+                $recipientIds = array_values(array_unique($recipientIds));
+                $placeholders = implode(',', array_fill(0, count($recipientIds), '?'));
+                $stmt = $db->prepare(
+                    "SELECT id FROM users WHERE role='user' AND status='active' AND id IN ($placeholders)"
+                );
+                $stmt->execute($recipientIds);
+                $validIds = array_map('intval', $stmt->fetchAll(PDO::FETCH_COLUMN));
+                if (count($validIds) !== count($recipientIds)) {
+                    throw new DomainException('Selected users must all be active player accounts.');
+                }
+                $recipientIds = $validIds;
+            } else {
+                throw new InvalidArgumentException('Choose all users or selected users as the notification audience.');
+            }
+            if (!$recipientIds) {
+                throw new DomainException('There are no active player accounts to notify.');
+            }
+            WalletService::atomic($db, function (PDO $db) use ($admin, $recipientIds, $title, $body, $targetMode): void {
+                $stmt = $db->prepare(
+                    "INSERT INTO notifications (user_id, notification_type, title, body, target_url)
+                     VALUES (?, 'admin_message', ?, ?, 'index.php?page=notifications')"
+                );
+                foreach ($recipientIds as $recipientId) {
+                    $stmt->execute([$recipientId, $title, $body]);
+                }
+                audit_log((int) $admin['id'], 'admin.notification_sent', 'notification', null, null, [
+                    'target_mode' => $targetMode,
+                    'recipient_count' => count($recipientIds),
+                    'recipient_user_ids' => $targetMode === 'selected' ? $recipientIds : [],
+                    'title' => $title,
+                ]);
+            });
+            flash('success', 'Notification sent to ' . count($recipientIds) . ' user(s).');
+            redirect('index.php?page=admin-notifications');
+        }
         case 'admin-user-toggle': {
             $admin = require_admin();
             $id = post_int('user_id', 1);
@@ -724,14 +924,6 @@ function handle_post_action(): never
             TeamService::adminRemoveMember((int) $admin['id'], post_int('team_id', 1), post_int('member_id', 1));
             flash('success', 'Team member removed. Active tournament entries were protected.');
             redirect('index.php?page=admin-teams');
-        }
-        case 'admin-payment-refund': {
-            $admin = require_admin();
-            $orderId = post_int('payment_order_id', 1);
-            $amount = money_minor(post_string('amount_rupees', 20, true));
-            PaymentGateway::requestRefund($orderId, $amount, (int) $admin['id']);
-            flash('success', 'Refund request was sent to Razorpay. It remains pending until the verified provider event arrives.');
-            redirect('index.php?page=admin-wallet');
         }
         case 'admin-announcement-save': {
             $admin = require_admin();
@@ -809,19 +1001,29 @@ function handle_post_action(): never
             if ($minimum < 100 || $maximum < $minimum || $maximum > 50000000) {
                 throw new InvalidArgumentException('Withdrawal limits must be at least ₹1 and the maximum cannot be lower than the minimum or greater than ₹500,000.');
             }
-            WalletService::atomic($db, function (PDO $db) use ($admin, $minimum, $maximum): void {
-                foreach (['min_withdrawal_minor' => $minimum, 'max_withdrawal_minor' => $maximum] as $key => $value) {
+            $stmt = $db->prepare('SELECT setting_value FROM settings WHERE setting_key=?');
+            $stmt->execute(['deposit_qr_path']);
+            $existingQrPath = $stmt->fetchColumn();
+            $existingQrPath = is_string($existingQrPath) && $existingQrPath !== '' ? $existingQrPath : null;
+            $qrPath = store_deposit_qr($_FILES['deposit_qr'] ?? null, $existingQrPath);
+            WalletService::atomic($db, function (PDO $db) use ($admin, $minimum, $maximum, $qrPath): void {
+                foreach ([
+                    'min_withdrawal_minor' => $minimum,
+                    'max_withdrawal_minor' => $maximum,
+                    'deposit_qr_path' => $qrPath ?? '',
+                ] as $key => $value) {
                     $stmt = $db->prepare(
                         'INSERT INTO settings (setting_key, setting_value, updated_by) VALUES (?,?,?)
                          ON DUPLICATE KEY UPDATE setting_value=VALUES(setting_value), updated_by=VALUES(updated_by)'
                     );
                     $stmt->execute([$key, (string) $value, $admin['id']]);
                 }
-                audit_log((int) $admin['id'], 'settings.withdrawal_limits_updated', 'settings', null, null, [
+                audit_log((int) $admin['id'], 'settings.wallet_configuration_updated', 'settings', null, null, [
                     'min_withdrawal_minor' => $minimum, 'max_withdrawal_minor' => $maximum,
+                    'deposit_qr_configured' => $qrPath !== null,
                 ]);
             });
-            flash('success', 'Withdrawal limits updated.');
+            flash('success', 'Wallet settings updated.');
             redirect('index.php?page=admin-settings');
         }
         default:

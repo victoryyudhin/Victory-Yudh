@@ -214,46 +214,22 @@ function render_page(): array
             $stmt = $db->prepare('SELECT * FROM withdrawal_requests WHERE user_id=? ORDER BY created_at DESC LIMIT 8');
             $stmt->execute([$current['id']]);
             $withdrawals = $stmt->fetchAll();
-            $paymentConfigured = PaymentGateway::isConfigured();
+            $stmt = $db->prepare('SELECT * FROM deposit_requests WHERE user_id=? ORDER BY created_at DESC LIMIT 8');
+            $stmt->execute([$current['id']]);
+            $depositRequests = $stmt->fetchAll();
+            $stmt = $db->prepare("SELECT setting_value FROM settings WHERE setting_key='deposit_qr_path'");
+            $stmt->execute();
+            $depositQrPath = (string) ($stmt->fetchColumn() ?: '');
+            if (!isset($_SESSION['_deposit_nonce'])) {
+                $_SESSION['_deposit_nonce'] = bin2hex(random_bytes(16));
+            }
+            $depositNonce = $_SESSION['_deposit_nonce'];
             if (!isset($_SESSION['_withdraw_nonce'])) {
                 $_SESSION['_withdraw_nonce'] = bin2hex(random_bytes(16));
             }
             $withdrawNonce = $_SESSION['_withdraw_nonce'];
             $pageTitle = 'Wallet & transactions';
             $contentFile = 'wallet';
-            break;
-        }
-        case 'checkout': {
-            $current = require_auth();
-            $localId = (int) ($_SESSION['payment_order_id'] ?? 0);
-            $providerId = (string) ($_SESSION['payment_provider_order_id'] ?? '');
-            $stmt = $db->prepare('SELECT * FROM payment_orders WHERE id=? AND user_id=? AND provider_order_id=?');
-            $stmt->execute([$localId, $current['id'], $providerId]);
-            $orderRow = $stmt->fetch();
-            if (!$orderRow || $orderRow['status'] !== 'created') {
-                flash('error', 'There is no active payment order to complete.');
-                redirect('index.php?page=wallet');
-            }
-            $order = [
-                'id' => (int) $orderRow['id'],
-                'provider_order_id' => $orderRow['provider_order_id'],
-                'amount_minor' => (int) $orderRow['amount_minor'],
-                'key_id' => (string) config('razorpay_key_id', ''),
-            ];
-            $pageTitle = 'Complete wallet deposit';
-            $contentFile = 'payment-checkout';
-            break;
-        }
-        case 'payment-status': {
-            $current = require_auth();
-            $localId = filter_var($_GET['id'] ?? null, FILTER_VALIDATE_INT);
-            $stmt = $db->prepare('SELECT status FROM payment_orders WHERE id=? AND user_id=?');
-            $stmt->execute([$localId ?: 0, $current['id']]);
-            $orderStatus = $stmt->fetchColumn();
-            if (!is_string($orderStatus)) return ['not_found' => true];
-            $paymentStatus = $orderStatus === 'captured' ? 'captured' : 'pending';
-            $pageTitle = 'Payment verification status';
-            $contentFile = 'checkout-status';
             break;
         }
         case 'team': {
@@ -331,6 +307,20 @@ function render_page(): array
                 }
                 $availableTournaments = [];
                 $rows = ScoringService::leaderboard((int) $tournamentId);
+                $stmt = $db->prepare(
+                    "SELECT m.id AS match_id,m.match_number,m.note,m.status,
+                            r.registration_id,r.placement_rank,r.kills,r.total_points,
+                            COALESCE(t.name,p.display_name,u.email) AS entry_name
+                     FROM matches m JOIN results r ON r.match_id=m.id
+                     JOIN registrations reg ON reg.id=r.registration_id
+                     LEFT JOIN teams t ON t.id=reg.team_id
+                     JOIN users u ON u.id=reg.captain_id
+                     LEFT JOIN profiles p ON p.user_id=u.id
+                     WHERE m.tournament_id=? AND reg.status='confirmed'
+                     ORDER BY m.match_number,r.placement_rank,r.total_points DESC"
+                );
+                $stmt->execute([$tournamentId]);
+                $matchResults = $stmt->fetchAll();
             }
             $pageTitle = 'Leaderboard';
             $contentFile = 'leaderboard';
@@ -348,10 +338,10 @@ function render_page(): array
             $eyebrow = $eyebrows[$page];
             $heading = $headings[$page];
             $contentHtml = match ($page) {
-                'faq' => '<h2>How do I join a tournament?</h2><p>Create an account, open a tournament with registration open, and register. Solo entries do not need a team. Duo and Squad entries require a captain with exactly the listed player count and enough wallet balance for the fee.</p><h2>How are tournament scores calculated?</h2><p>For each match: placement points + (kills × configured points per kill) + bonuses − penalties. Match totals are aggregated and ranked using the tournament’s published tie-breaker order. Admins enter or import the source results; Victory Yudh does not claim live access to Free Fire results.</p><h2>When do room details appear?</h2><p>Room ID and password are visible only to registered players after the tournament’s configured release time. Do not share room details outside your entry.</p><h2>When is a deposit credited?</h2><p>A deposit is credited only after Razorpay’s signature or webhook is verified and the payment is confirmed as captured. An authorized but uncaptured payment is not available to spend.</p><h2>When is a withdrawal paid?</h2><p>Requests pass through Pending, Approved, Processing, Paid, or Rejected. Funds are reserved at request time. “Paid” is recorded only after the administrator has a confirmed payout reference.</p>',
+                'faq' => '<h2>How do I join a tournament?</h2><p>Create an account, open a tournament with registration open, and register. Solo entries do not need a team. Duo and Squad entries require a captain with exactly the listed player count and enough wallet balance for the fee.</p><h2>How are tournament scores calculated?</h2><p>For each match: placement points + (kills × configured points per kill) + bonuses − penalties. Match totals are aggregated and ranked using the tournament’s published tie-breaker order. Admins enter or import the source results; Victory Yudh does not claim live access to Free Fire results.</p><h2>When do room details appear?</h2><p>Room ID and password are visible only to registered players after the tournament’s configured release time. Do not share room details outside your entry.</p><h2>When is a deposit credited?</h2><p>Submit the amount and transaction ID or UTR after paying to the displayed admin QR code. The wallet is credited only after an administrator verifies and approves the request.</p><h2>When is a withdrawal paid?</h2><p>Requests pass through Pending, Approved, Processing, Paid, or Rejected. Funds are reserved at request time. 18% GST is deducted from each requested amount. “Paid” is recorded only after the administrator has transferred the net amount and entered a confirmed reference.</p>',
                 'terms' => '<h2>Eligibility and fair play</h2><p>Use an account and payment method you are authorized to use. Follow the rules listed on each tournament page, join with the registered players, and do not distribute private room credentials.</p><h2>Match results</h2><p>Results are entered or imported by authorized tournament administrators from match data they have collected. The leaderboard displays calculated results and may be provisional until an admin finalizes them. Corrections are audited.</p><h2>Wallet and prizes</h2><p>Wallet balances are maintained in INR minor units. Tournament entry fees are debited when a registration is confirmed. Prize credits are posted by an administrator and appear in the ledger. Withdrawal requests are reviewed and are not a guarantee of payment.</p><h2>Platform status</h2><p>Victory Yudh is an independent community tournament platform and is not affiliated with or endorsed by Garena. Tournament availability and eligibility are subject to applicable law, provider rules, and administrator decisions.</p><h2>Contact</h2><p>Use the in-app support form to report account, entry, result, or wallet issues. Do not send passwords or payment credentials.</p>',
-                'privacy' => '<h2>Information we store</h2><p>Account email, player name, optional Free Fire UID, team memberships, tournament entries, match results, wallet ledger entries, support requests, and operational audit events are stored to provide the service.</p><h2>Payment data</h2><p>Razorpay processes payment details. Victory Yudh stores payment-order references and verification states, not card numbers or UPI payment credentials. UPI destinations submitted for withdrawals are encrypted at rest and shown only to administrators who review payouts.</p><h2>Security and access</h2><p>Passwords are stored as password hashes. Administrative actions are restricted and audited. Tournament room credentials are encrypted at rest and released only to registered players after the configured time.</p><h2>Retention and requests</h2><p>Financial, payment, and tournament records may be retained as needed for reconciliation, disputes, security, and applicable legal requirements. Contact support to request correction or account assistance.</p>',
-                'refund-policy' => '<h2>Cancelled tournaments</h2><p>When an administrator cancels a tournament, confirmed entry fees are credited back to the wallet of the registering captain. The refund is recorded once in the immutable ledger.</p><h2>Deposits</h2><p>Deposits are credited only after verified capture. A provider refund is submitted by an administrator through Razorpay and remains pending until provider confirmation. The wallet debit is held while the provider request is pending; failed requests release those held funds.</p><h2>Withdrawals</h2><p>Withdrawal requests reserve funds. Rejected requests return the reservation to available balance. Approved and Processing requests are not marked Paid until an administrator records a confirmed payout reference.</p><h2>Need help?</h2><p>Submit an in-app support request with your transaction or tournament reference. Do not include passwords, API keys, card numbers, or other payment secrets.</p>',
+                'privacy' => '<h2>Information we store</h2><p>Account email, player name, optional Free Fire UID, team memberships, tournament entries, match results, wallet ledger entries, deposit transaction IDs or UTRs, support requests, and operational audit events are stored to provide the service.</p><h2>Wallet data</h2><p>Deposits are reviewed manually using the submitted amount and transaction reference. UPI destinations submitted for withdrawals are encrypted at rest and shown only to administrators who review payouts.</p><h2>Security and access</h2><p>Passwords are stored as password hashes. Administrative actions are restricted and audited. Tournament room credentials are encrypted at rest and released only to registered players after the configured time.</p><h2>Retention and requests</h2><p>Financial, payment, and tournament records may be retained as needed for reconciliation, disputes, security, and applicable legal requirements. Contact support to request correction or account assistance.</p>',
+                'refund-policy' => '<h2>Cancelled tournaments</h2><p>When an administrator cancels a tournament, confirmed entry fees are credited back to the wallet of the registering captain. The refund is recorded once in the immutable ledger.</p><h2>Deposits</h2><p>Deposit requests stay pending until an administrator verifies the transaction reference. Approved requests are credited to the wallet; rejected requests are not credited. Contact support if you believe a request was reviewed incorrectly.</p><h2>Withdrawals</h2><p>Withdrawal requests reserve funds. 18% GST is deducted from the requested amount. Rejected requests return the full reservation to available balance. Approved and Processing requests are not marked Paid until an administrator records a confirmed payout reference for the net amount.</p><h2>Need help?</h2><p>Submit an in-app support request with your transaction or tournament reference. Do not include passwords, API keys, card numbers, or other payment secrets.</p>',
                 default => '<p>Describe your issue in the secure form below. Our support team will review the request inside the admin inbox.</p><p>Never include account passwords, full payment card details, API keys, or payment provider secrets.</p>',
             };
             $pageTitle = $heading;
@@ -368,6 +358,7 @@ function render_page(): array
         case 'admin-wallet':
         case 'admin-withdrawals':
         case 'admin-announcements':
+        case 'admin-notifications':
         case 'admin-support':
         case 'admin-audit':
         case 'admin-settings': {

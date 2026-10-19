@@ -3,3 +3,4 @@
 -- DDL uses CREATE TABLE IF NOT EXISTS; this does not drop or truncate existing data.
 SOURCE migrations/001_initial.sql;
 SOURCE migrations/002_scoring_and_prize_rules.sql;
+SOURCE migrations/003_manual_wallet_flows.sql;

@@ -35,14 +35,19 @@ final class WithdrawalService
             throw new RuntimeException('Withdrawal destination could not be secured.');
         }
 
+        $gstMinor = intdiv($amountMinor * 18 + 50, 100);
+        $netAmountMinor = $amountMinor - $gstMinor;
         $db = Database::connection();
-        return WalletService::atomic($db, function (PDO $db) use ($userId, $amountMinor, $key, $encrypted, $iv, $tag): int {
+        return WalletService::atomic($db, function (PDO $db) use (
+            $userId, $amountMinor, $gstMinor, $netAmountMinor, $key, $encrypted, $iv, $tag
+        ): int {
             $stmt = $db->prepare(
                 'INSERT INTO withdrawal_requests
-                 (user_id, amount_minor, payout_method, payout_details_enc, payout_details_iv, payout_details_tag, idempotency_key)
-                 VALUES (?, ?, \'upi\', ?, ?, ?, ?)'
+                 (user_id, amount_minor, gst_minor, net_amount_minor, payout_method,
+                  payout_details_enc, payout_details_iv, payout_details_tag, idempotency_key)
+                 VALUES (?, ?, ?, ?, \'upi\', ?, ?, ?, ?)'
             );
-            $stmt->execute([$userId, $amountMinor, $encrypted, $iv, $tag, $key]);
+            $stmt->execute([$userId, $amountMinor, $gstMinor, $netAmountMinor, $encrypted, $iv, $tag, $key]);
             $requestId = (int) $db->lastInsertId();
             WalletService::post(
                 $db, $userId, 'withdrawal_reserve', $amountMinor, -$amountMinor, $amountMinor,
@@ -83,13 +88,24 @@ final class WithdrawalService
                 }
                 WalletService::post(
                     $db, $userId, 'withdrawal_paid', $amount, 0, -$amount,
-                    'withdrawal-paid:' . $requestId, 'withdrawal', $requestId, 'Payout confirmed by administrator'
+                    'withdrawal-paid:' . $requestId,
+                    'withdrawal',
+                    $requestId,
+                    'Manual payout confirmed; ' . format_money((int) $request['net_amount_minor']) .
+                    ' transferred after ' . format_money((int) $request['gst_minor']) . ' GST deduction'
                 );
                 $db->prepare(
                     "UPDATE withdrawal_requests SET status='paid', payout_reference=?, paid_at=NOW(),
                      reviewed_by=?, reviewed_at=NOW() WHERE id=?"
                 )->execute([$reference, $adminId, $requestId]);
-                notify_user($userId, 'withdrawal', 'Withdrawal marked paid', 'The administrator recorded payout reference ' . $reference . '.', 'index.php?page=wallet');
+                notify_user(
+                    $userId,
+                    'withdrawal',
+                    'Withdrawal marked paid',
+                    'The administrator recorded the transfer of ' . format_money((int) $request['net_amount_minor']) .
+                    ' after GST deduction. Reference: ' . $reference . '.',
+                    'index.php?page=wallet'
+                );
             } elseif ($decision === 'rejected' && in_array($oldStatus, ['pending', 'approved'], true)) {
                 $reason = trim($note);
                 if ($reason === '') {
@@ -106,7 +122,12 @@ final class WithdrawalService
             } else {
                 throw new DomainException('This withdrawal cannot move from ' . $oldStatus . ' to ' . $decision . '.');
             }
-            audit_log($adminId, 'withdrawal.' . $decision, 'withdrawal', $requestId, ['status' => $oldStatus], ['status' => $decision]);
+            audit_log($adminId, 'withdrawal.' . $decision, 'withdrawal', $requestId, ['status' => $oldStatus], [
+                'status' => $decision,
+                'amount_minor' => $amount,
+                'gst_minor' => (int) $request['gst_minor'],
+                'net_amount_minor' => (int) $request['net_amount_minor'],
+            ]);
         });
     }
 

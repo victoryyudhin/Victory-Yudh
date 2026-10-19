@@ -97,7 +97,8 @@ final class ScoringService
         int $kills,
         int $bonusPoints,
         int $penaltyPoints,
-        int $adminId
+        int $adminId,
+        ?string $matchNote = null
     ): void {
         self::saveResults($tournamentId, $matchNumber, [[
             'registration_id' => $registrationId,
@@ -105,18 +106,37 @@ final class ScoringService
             'kills' => $kills,
             'bonus_points' => $bonusPoints,
             'penalty_points' => $penaltyPoints,
-        ]], $adminId, false);
+        ]], $adminId, false, $matchNote);
     }
 
-    public static function saveResultsBulk(int $tournamentId, int $matchNumber, array $rows, int $adminId): int
+    public static function saveResultsBulk(
+        int $tournamentId,
+        int $matchNumber,
+        array $rows,
+        int $adminId,
+        ?string $matchNote = null
+    ): int
     {
-        return self::saveResults($tournamentId, $matchNumber, $rows, $adminId, true);
+        return self::saveResults($tournamentId, $matchNumber, $rows, $adminId, true, $matchNote);
     }
 
-    private static function saveResults(int $tournamentId, int $matchNumber, array $rows, int $adminId, bool $requireAll): int
+    private static function saveResults(
+        int $tournamentId,
+        int $matchNumber,
+        array $rows,
+        int $adminId,
+        bool $requireAll,
+        ?string $matchNote
+    ): int
     {
         if ($matchNumber < 1 || $matchNumber > 100 || !$rows || count($rows) > 1000) {
             throw new InvalidArgumentException('Choose a valid match and submit between 1 and 1,000 result rows.');
+        }
+        if ($matchNote !== null) {
+            $matchNote = trim($matchNote);
+            if (mb_strlen($matchNote) > 500) {
+                throw new InvalidArgumentException('Match notes must be 500 characters or fewer.');
+            }
         }
         $normalized = [];
         foreach ($rows as $row) {
@@ -144,7 +164,7 @@ final class ScoringService
 
         $db = Database::connection();
         return WalletService::atomic($db, function (PDO $db) use (
-            $tournamentId, $matchNumber, $normalized, $adminId, $requireAll
+            $tournamentId, $matchNumber, $normalized, $adminId, $requireAll, $matchNote
         ): int {
             $stmt = $db->prepare('SELECT id, results_status, payouts_locked_at FROM tournaments WHERE id=? FOR UPDATE');
             $stmt->execute([$tournamentId]);
@@ -180,6 +200,10 @@ final class ScoringService
                 $stmt = $db->prepare('SELECT id FROM matches WHERE tournament_id=? AND match_number=?');
                 $stmt->execute([$tournamentId, $matchNumber]);
                 $matchId = (int) $stmt->fetchColumn();
+            }
+            if ($matchNote !== null) {
+                $db->prepare('UPDATE matches SET note=? WHERE id=?')
+                    ->execute([$matchNote !== '' ? $matchNote : null, $matchId]);
             }
 
             $stmt = $db->prepare(
@@ -236,6 +260,7 @@ final class ScoringService
                     [
                         'tournament_id' => $tournamentId,
                         'match_number' => $matchNumber,
+                        'match_note' => $matchNote,
                         'registration_id' => $registrationId,
                         'placement_rank' => $row['placement_rank'],
                         'kills' => $row['kills'],
