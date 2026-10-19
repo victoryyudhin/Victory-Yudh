@@ -20,7 +20,7 @@
       </div>
       <form method="post" action="<?= h(app_url('index.php?action=deposit-request')) ?>" class="mt-5 space-y-3">
         <?= csrf_field() ?><input type="hidden" name="deposit_nonce" value="<?= h($depositNonce) ?>">
-        <label class="block text-xs font-bold text-slate-400">Amount paid (INR)<input class="form-control mt-2" type="number" name="amount_rupees" min="1" max="500000" step="0.01" required placeholder="e.g. 250.00"></label>
+        <label class="block text-xs font-bold text-slate-400">Amount paid (INR)<input class="form-control mt-2" type="number" name="amount_rupees" min="1" max="500000" step="0.01" required placeholder="Minimum ₹10"></label>
         <label class="block text-xs font-bold text-slate-400">Transaction ID / UTR number<input class="form-control mt-2" type="text" name="utr_number" minlength="6" maxlength="120" autocomplete="off" required placeholder="Enter the UPI transaction reference"></label>
         <button class="btn-primary w-full rounded-xl px-4 py-3 text-sm font-black">Send deposit request</button>
       </form>
