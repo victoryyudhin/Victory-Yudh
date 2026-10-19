@@ -217,9 +217,6 @@ function render_page(): array
             $stmt = $db->prepare('SELECT * FROM deposit_requests WHERE user_id=? ORDER BY created_at DESC LIMIT 8');
             $stmt->execute([$current['id']]);
             $depositRequests = $stmt->fetchAll();
-            $stmt = $db->prepare("SELECT setting_value FROM settings WHERE setting_key='deposit_qr_path'");
-            $stmt->execute();
-            $depositQrPath = (string) ($stmt->fetchColumn() ?: '');
             if (!isset($_SESSION['_deposit_nonce'])) {
                 $_SESSION['_deposit_nonce'] = bin2hex(random_bytes(16));
             }
@@ -298,6 +295,7 @@ function render_page(): array
                 )->fetchAll();
                 $tournament = null;
                 $rows = [];
+                $matchNotes = [];
             } else {
                 $stmt = $db->prepare("SELECT * FROM tournaments WHERE id=? AND results_status IN ('provisional','final')");
                 $stmt->execute([$tournamentId]);
@@ -321,6 +319,13 @@ function render_page(): array
                 );
                 $stmt->execute([$tournamentId]);
                 $matchResults = $stmt->fetchAll();
+                $stmt = $db->prepare(
+                    "SELECT match_number,note FROM matches
+                     WHERE tournament_id=? AND status='completed' AND note IS NOT NULL AND TRIM(note)<>''
+                     ORDER BY match_number"
+                );
+                $stmt->execute([$tournamentId]);
+                $matchNotes = $stmt->fetchAll();
             }
             $pageTitle = 'Leaderboard';
             $contentFile = 'leaderboard';
@@ -370,10 +375,10 @@ function render_page(): array
                     'open_tournaments' => (int) $db->query("SELECT COUNT(*) FROM tournaments WHERE status='open'")->fetchColumn(),
                     'registrations' => (int) $db->query("SELECT COUNT(*) FROM registrations WHERE status='confirmed'")->fetchColumn(),
                     'pending_withdrawals' => (int) $db->query("SELECT COUNT(*) FROM withdrawal_requests WHERE status IN ('pending','approved','processing')")->fetchColumn(),
-                    'deposits' => (int) $db->query("SELECT COALESCE(SUM(amount_minor),0) FROM payment_orders WHERE status='captured'")->fetchColumn(),
+                    'manual_deposits' => (int) $db->query("SELECT COALESCE(SUM(amount_minor),0) FROM deposit_requests WHERE status='approved'")->fetchColumn(),
                     'support' => (int) $db->query("SELECT COUNT(*) FROM support_requests WHERE status IN ('open','in_progress')")->fetchColumn(),
                     'unpublished_results' => (int) $db->query("SELECT COUNT(*) FROM tournaments WHERE results_status='provisional'")->fetchColumn(),
-                    'pending_refunds' => (int) $db->query("SELECT COUNT(*) FROM payment_refunds WHERE status='pending'")->fetchColumn(),
+                    'pending_deposits' => (int) $db->query("SELECT COUNT(*) FROM deposit_requests WHERE status='pending'")->fetchColumn(),
                 ];
                 $recentRegistrations = $db->query(
                     "SELECT r.created_at,t.title,t.mode,COALESCE(p.display_name,u.email) AS display_name
@@ -486,20 +491,43 @@ function render_page(): array
                 ];
                 $activeMatchNumber = 1;
                 $existingMatchResults = [];
+                $currentMatchNote = '';
+                $registrationParticipants = [];
                 if ($selectedTournament) {
                     $stmt = $db->prepare(
                         'SELECT r.id,r.captain_id,t.name AS team_name,p.display_name,COUNT(rm.user_id) AS member_count
                          FROM registrations r LEFT JOIN teams t ON t.id=r.team_id
-                         JOIN profiles p ON p.user_id=r.captain_id
+                         JOIN users captain ON captain.id=r.captain_id
+                         LEFT JOIN profiles p ON p.user_id=captain.id
                          JOIN registration_members rm ON rm.registration_id=r.id
                          WHERE r.tournament_id=? AND r.status=\'confirmed\'
                          GROUP BY r.id,r.captain_id,t.name,p.display_name ORDER BY r.created_at'
                     );
                     $stmt->execute([$selectedTournament['id']]);
                     $registrations = $stmt->fetchAll();
-                    foreach ($registrations as &$entry) $entry['entry_name'] = $entry['team_name'] ?: $entry['display_name'];
+                    $stmt = $db->prepare(
+                        'SELECT rm.registration_id,u.id AS user_id,u.email AS username,p.display_name AS ign
+                         FROM registration_members rm
+                         JOIN registrations r ON r.id=rm.registration_id AND r.tournament_id=rm.tournament_id
+                         JOIN users u ON u.id=rm.user_id
+                         LEFT JOIN profiles p ON p.user_id=u.id
+                         WHERE rm.tournament_id=? AND r.status=\'confirmed\'
+                         ORDER BY rm.registration_id,u.email'
+                    );
+                    $stmt->execute([$selectedTournament['id']]);
+                    foreach ($stmt->fetchAll() as $participant) {
+                        $registrationParticipants[(int) $participant['registration_id']][] = $participant;
+                    }
+                    foreach ($registrations as &$entry) {
+                        $entry['entry_name'] = $entry['team_name'] ?: ($entry['display_name'] ?: 'Player');
+                        $entry['players'] = $registrationParticipants[(int) $entry['id']] ?? [];
+                    }
                     unset($entry);
                     $leaderboard = ScoringService::leaderboard((int) $selectedTournament['id']);
+                    foreach ($leaderboard as &$standing) {
+                        $standing['players'] = $registrationParticipants[(int) $standing['registration_id']] ?? [];
+                    }
+                    unset($standing);
                     $stmt = $db->prepare(
                         'SELECT placement_rank,placement_points,points_per_kill,placement_multiplier,
                                 bonus_multiplier,penalty_multiplier,tie_breakers
@@ -538,6 +566,11 @@ function render_page(): array
                     foreach ($stmt->fetchAll() as $result) {
                         $existingMatchResults[(int) $result['registration_id']] = $result;
                     }
+                    $stmt = $db->prepare(
+                        'SELECT note FROM matches WHERE tournament_id=? AND match_number=? LIMIT 1'
+                    );
+                    $stmt->execute([$selectedTournament['id'], $activeMatchNumber]);
+                    $currentMatchNote = (string) ($stmt->fetchColumn() ?: '');
                 }
                 $contentFile = 'admin/results';
             } elseif ($page === 'admin-users') {
@@ -594,26 +627,54 @@ function render_page(): array
                 unset($team);
                 $contentFile = 'admin/teams';
             } elseif ($page === 'admin-wallet') {
-                $search = mb_substr(trim(is_string($_GET['q'] ?? null) ? $_GET['q'] : ''), 0, 100);
-                $statusFilter = is_string($_GET['status'] ?? null) ? $_GET['status'] : 'all';
-                if (!in_array($statusFilter, ['all','created','authorized','captured','failed','refunded'], true)) $statusFilter = 'all';
-                $where = 'WHERE 1=1';
-                $params = [];
-                if ($statusFilter !== 'all') { $where .= ' AND po.status=?'; $params[] = $statusFilter; }
-                if ($search !== '') { $where .= ' AND (u.email LIKE ? OR po.provider_order_id LIKE ? OR po.provider_payment_id LIKE ? OR po.receipt LIKE ?)'; for($i=0;$i<4;$i++) $params[] = '%' . $search . '%'; }
-                $pageNumber = max(1, (int) ($_GET['p'] ?? 1));
-                [$payments, $total, $pageCount, $pageNumber] = paged_rows(
-                    'SELECT po.*,u.email,p.display_name FROM payment_orders po JOIN users u ON u.id=po.user_id
-                     LEFT JOIN profiles p ON p.user_id=u.id ' . $where . ' ORDER BY po.created_at DESC',
-                    'SELECT COUNT(*) FROM payment_orders po JOIN users u ON u.id=po.user_id ' . $where,
-                    $params, $pageNumber, 20
+                $depositSearch = mb_substr(trim(is_string($_GET['deposit_q'] ?? null) ? $_GET['deposit_q'] : ''), 0, 100);
+                $depositStatus = is_string($_GET['deposit_status'] ?? null) ? $_GET['deposit_status'] : 'pending';
+                if (!in_array($depositStatus, ['all','pending','approved','rejected'], true)) $depositStatus = 'pending';
+                $depositWhere = 'WHERE 1=1';
+                $depositParams = [];
+                if ($depositStatus !== 'all') {
+                    $depositWhere .= ' AND dr.status=?';
+                    $depositParams[] = $depositStatus;
+                }
+                if ($depositSearch !== '') {
+                    $depositWhere .= ' AND (u.email LIKE ? OR p.display_name LIKE ? OR dr.utr_number LIKE ?)';
+                    for ($i = 0; $i < 3; $i++) $depositParams[] = '%' . $depositSearch . '%';
+                }
+                $depositPage = max(1, (int) ($_GET['deposit_p'] ?? 1));
+                [$depositRequests, $depositTotal, $depositPageCount, $depositPage] = paged_rows(
+                    'SELECT dr.*,u.email,p.display_name FROM deposit_requests dr
+                     JOIN users u ON u.id=dr.user_id LEFT JOIN profiles p ON p.user_id=u.id ' .
+                     $depositWhere . ' ORDER BY dr.created_at DESC',
+                    'SELECT COUNT(*) FROM deposit_requests dr
+                     JOIN users u ON u.id=dr.user_id LEFT JOIN profiles p ON p.user_id=u.id ' . $depositWhere,
+                    $depositParams, $depositPage, 20
                 );
-                $totals = [
-                    'captured_minor' => (int) $db->query("SELECT COALESCE(SUM(amount_minor),0) FROM payment_orders WHERE status='captured'")->fetchColumn(),
-                    'captured_count' => (int) $db->query("SELECT COUNT(*) FROM payment_orders WHERE status='captured'")->fetchColumn(),
-                    'pending_refunds' => (int) $db->query("SELECT COUNT(*) FROM payment_refunds WHERE status='pending'")->fetchColumn(),
+                $manualDepositTotals = [
+                    'pending' => (int) $db->query("SELECT COUNT(*) FROM deposit_requests WHERE status='pending'")->fetchColumn(),
+                    'approved_minor' => (int) $db->query("SELECT COALESCE(SUM(amount_minor),0) FROM deposit_requests WHERE status='approved'")->fetchColumn(),
                 ];
-                $webhookEvents = $db->query('SELECT * FROM payment_webhook_events ORDER BY received_at DESC LIMIT 30')->fetchAll();
+
+                $walletUserSearch = mb_substr(trim(is_string($_GET['wallet_user_q'] ?? null) ? $_GET['wallet_user_q'] : ''), 0, 100);
+                $walletUsers = [];
+                if ($walletUserSearch !== '') {
+                    $term = '%' . $walletUserSearch . '%';
+                    $stmt = $db->prepare(
+                        "SELECT u.id,u.email,u.status,p.display_name,COALESCE(w.balance_minor,0) AS balance_minor,
+                                COALESCE(w.reserved_minor,0) AS reserved_minor
+                         FROM users u LEFT JOIN profiles p ON p.user_id=u.id
+                         LEFT JOIN wallet_accounts w ON w.user_id=u.id
+                         WHERE u.role='user' AND (u.email LIKE ? OR p.display_name LIKE ? OR CAST(u.id AS CHAR) LIKE ?)
+                         ORDER BY u.email LIMIT 30"
+                    );
+                    $stmt->execute([$term, $term, $term]);
+                    $walletUsers = $stmt->fetchAll();
+                }
+                if (!isset($_SESSION['_wallet_adjustment_nonce']) ||
+                    !preg_match('/^[a-f0-9]{32}$/', (string) $_SESSION['_wallet_adjustment_nonce'])) {
+                    $_SESSION['_wallet_adjustment_nonce'] = bin2hex(random_bytes(16));
+                }
+                $walletAdjustNonce = $_SESSION['_wallet_adjustment_nonce'];
+
                 $ledgerSearch = mb_substr(trim(is_string($_GET['ledger_q'] ?? null) ? $_GET['ledger_q'] : ''), 0, 100);
                 $ledgerType = is_string($_GET['ledger_type'] ?? null) ? $_GET['ledger_type'] : 'all';
                 $ledgerTypes = ['deposit','entry_fee','entry_refund','prize','withdrawal_reserve','withdrawal_release','withdrawal_paid','admin_adjustment'];
@@ -660,6 +721,25 @@ function render_page(): array
                     'SELECT a.*,u.email FROM announcements a JOIN users u ON u.id=a.created_by ORDER BY a.created_at DESC LIMIT 80'
                 )->fetchAll();
                 $contentFile = 'admin/announcements';
+            } elseif ($page === 'admin-notifications') {
+                $notificationSearch = mb_substr(trim(is_string($_GET['q'] ?? null) ? $_GET['q'] : ''), 0, 100);
+                $notificationUsers = [];
+                $activeNotificationUsers = (int) $db->query(
+                    "SELECT COUNT(*) FROM users WHERE role='user' AND status='active'"
+                )->fetchColumn();
+                if ($notificationSearch !== '') {
+                    $term = '%' . $notificationSearch . '%';
+                    $stmt = $db->prepare(
+                        "SELECT u.id,u.email,p.display_name
+                         FROM users u LEFT JOIN profiles p ON p.user_id=u.id
+                         WHERE u.role='user' AND u.status='active'
+                           AND (u.email LIKE ? OR p.display_name LIKE ? OR CAST(u.id AS CHAR) LIKE ?)
+                         ORDER BY u.email LIMIT 200"
+                    );
+                    $stmt->execute([$term, $term, $term]);
+                    $notificationUsers = $stmt->fetchAll();
+                }
+                $contentFile = 'admin/notifications';
             } elseif ($page === 'admin-support') {
                 $search = mb_substr(trim(is_string($_GET['q'] ?? null) ? $_GET['q'] : ''), 0, 80);
                 $statusFilter = is_string($_GET['status'] ?? null) ? $_GET['status'] : 'all';

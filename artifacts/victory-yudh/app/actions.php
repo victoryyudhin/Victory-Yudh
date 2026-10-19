@@ -126,34 +126,6 @@ function store_tournament_banner(?array $upload, ?string $currentPath): ?string
     return 'uploads/' . $filename;
 }
 
-function store_deposit_qr(?array $upload, ?string $currentPath): ?string
-{
-    if (!$upload || ($upload['error'] ?? UPLOAD_ERR_NO_FILE) === UPLOAD_ERR_NO_FILE) {
-        return $currentPath;
-    }
-    if (($upload['error'] ?? UPLOAD_ERR_OK) !== UPLOAD_ERR_OK || (int) ($upload['size'] ?? 0) > 2 * 1024 * 1024) {
-        throw new InvalidArgumentException('Deposit QR image must be smaller than 2 MB.');
-    }
-    $tmp = $upload['tmp_name'] ?? '';
-    if (!is_string($tmp) || !is_uploaded_file($tmp)) {
-        throw new InvalidArgumentException('Deposit QR image could not be verified.');
-    }
-    $mime = (new finfo(FILEINFO_MIME_TYPE))->file($tmp);
-    $extensions = ['image/jpeg' => 'jpg', 'image/png' => 'png', 'image/webp' => 'webp'];
-    if (!isset($extensions[$mime]) || @getimagesize($tmp) === false) {
-        throw new InvalidArgumentException('Use a valid JPEG, PNG, or WebP QR image.');
-    }
-    $directory = dirname(__DIR__) . '/public/uploads';
-    if (!is_dir($directory) && !mkdir($directory, 0750, true) && !is_dir($directory)) {
-        throw new RuntimeException('Upload storage is not available.');
-    }
-    $filename = 'deposit-qr-' . bin2hex(random_bytes(18)) . '.' . $extensions[$mime];
-    if (!move_uploaded_file($tmp, $directory . '/' . $filename)) {
-        throw new RuntimeException('The QR image could not be saved.');
-    }
-    return 'uploads/' . $filename;
-}
-
 function handle_post_action(): never
 {
     if (!is_post()) {
@@ -1021,16 +993,10 @@ function handle_post_action(): never
             if ($minimum < 100 || $maximum < $minimum || $maximum > 50000000) {
                 throw new InvalidArgumentException('Withdrawal limits must be at least ₹1 and the maximum cannot be lower than the minimum or greater than ₹500,000.');
             }
-            $stmt = $db->prepare('SELECT setting_value FROM settings WHERE setting_key=?');
-            $stmt->execute(['deposit_qr_path']);
-            $existingQrPath = $stmt->fetchColumn();
-            $existingQrPath = is_string($existingQrPath) && $existingQrPath !== '' ? $existingQrPath : null;
-            $qrPath = store_deposit_qr($_FILES['deposit_qr'] ?? null, $existingQrPath);
-            WalletService::atomic($db, function (PDO $db) use ($admin, $minimum, $maximum, $qrPath): void {
+            WalletService::atomic($db, function (PDO $db) use ($admin, $minimum, $maximum): void {
                 foreach ([
                     'min_withdrawal_minor' => $minimum,
                     'max_withdrawal_minor' => $maximum,
-                    'deposit_qr_path' => $qrPath ?? '',
                 ] as $key => $value) {
                     $stmt = $db->prepare(
                         'INSERT INTO settings (setting_key, setting_value, updated_by) VALUES (?,?,?)
@@ -1040,7 +1006,6 @@ function handle_post_action(): never
                 }
                 audit_log((int) $admin['id'], 'settings.wallet_configuration_updated', 'settings', null, null, [
                     'min_withdrawal_minor' => $minimum, 'max_withdrawal_minor' => $maximum,
-                    'deposit_qr_configured' => $qrPath !== null,
                 ]);
             });
             flash('success', 'Wallet settings updated.');

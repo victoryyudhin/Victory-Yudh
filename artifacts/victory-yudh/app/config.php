@@ -35,9 +35,6 @@ function config(string $key, mixed $default = null): mixed
         'db_user' => 'DB_USER',
         'db_password' => 'DB_PASSWORD',
         'db_charset' => 'DB_CHARSET',
-        'razorpay_key_id' => 'RAZORPAY_KEY_ID',
-        'razorpay_key_secret' => 'RAZORPAY_KEY_SECRET',
-        'razorpay_webhook_secret' => 'RAZORPAY_WEBHOOK_SECRET',
         'upload_dir' => 'UPLOAD_DIR',
     ];
     $envName = $keys[$key] ?? null;

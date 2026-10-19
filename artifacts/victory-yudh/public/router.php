@@ -11,10 +11,6 @@ if ($path === '/health' || $path === '/health.php') {
     require __DIR__ . '/health.php';
     return true;
 }
-if ($path === '/webhook/razorpay') {
-    require __DIR__ . '/webhook.php';
-    return true;
-}
 $candidate = realpath(__DIR__ . $path);
 if ($candidate && str_starts_with($candidate, realpath(__DIR__) . DIRECTORY_SEPARATOR) && is_file($candidate)) {
     return false;

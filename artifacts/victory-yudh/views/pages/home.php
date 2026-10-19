@@ -86,7 +86,7 @@
           <div><h3 class="text-sm font-bold">How are scores calculated?</h3><p class="mt-1 text-xs leading-5 text-slate-400">Placement points + kills × points per kill + bonuses − penalties. Each tournament publishes its scoring rules.</p></div>
           <div><h3 class="text-sm font-bold">Does Victory Yudh fetch live game results?</h3><p class="mt-1 text-xs leading-5 text-slate-400">No. Results are entered or imported by authorized admins; the platform calculates totals from that data.</p></div>
           <div><h3 class="text-sm font-bold">When can I see a room password?</h3><p class="mt-1 text-xs leading-5 text-slate-400">Only confirmed participants can access room credentials after the admin-configured release time.</p></div>
-          <div><h3 class="text-sm font-bold">How do deposits work?</h3><p class="mt-1 text-xs leading-5 text-slate-400">Deposits require a verified Razorpay test or live payment. No payment is credited from a browser-only confirmation.</p></div>
+          <div><h3 class="text-sm font-bold">How do deposits work?</h3><p class="mt-1 text-xs leading-5 text-slate-400">Pay to the UPI ID shown in your wallet, then submit the amount and transaction ID or UTR. An admin verifies each request before crediting it.</p></div>
         </div>
       </div>
     </div>
