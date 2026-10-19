@@ -13,7 +13,13 @@ if (isset($_GET['action'])) {
         flash('error', $e->getMessage());
         redirect(fallback_for_action($action));
     } catch (Throwable $e) {
-        error_log('Victory Yudh action failure: ' . get_class($e));
+        $loggedAction = preg_replace('/[^a-z0-9_-]/i', '', $action) ?? '';
+        error_log(sprintf(
+            'Victory Yudh action failure (action=%s): %s: %s',
+            $loggedAction,
+            get_class($e),
+            $e->getMessage()
+        ));
         flash('error', 'The request could not be completed. No success was recorded; check the relevant status page before retrying.');
         redirect(fallback_for_action($action));
     }

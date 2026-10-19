@@ -4,3 +4,4 @@
 SOURCE migrations/001_initial.sql;
 SOURCE migrations/002_scoring_and_prize_rules.sql;
 SOURCE migrations/003_manual_wallet_flows.sql;
+SOURCE migrations/004_user_auth_columns.sql;

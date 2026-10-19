@@ -194,15 +194,35 @@ function handle_post_action(): never
             if ($stmt->fetchColumn()) {
                 throw new DomainException('An account with that email already exists.');
             }
-            WalletService::atomic($db, function (PDO $db) use ($email, $displayName, $uid, $password): void {
-                $stmt = $db->prepare('INSERT INTO users (email, password_hash) VALUES (?,?)');
-                $stmt->execute([$email, password_hash($password, PASSWORD_DEFAULT)]);
-                $userId = (int) $db->lastInsertId();
-                $db->prepare('INSERT INTO profiles (user_id, display_name, free_fire_uid) VALUES (?,?,?)')
-                    ->execute([$userId, $displayName, $uid === '' ? null : $uid]);
-                $db->prepare('INSERT INTO wallet_accounts (user_id) VALUES (?)')->execute([$userId]);
-                audit_log($userId, 'account.created', 'user', $userId, null, ['role' => 'user']);
-            });
+            try {
+                WalletService::atomic($db, function (PDO $db) use ($email, $displayName, $uid, $password): void {
+                    $stmt = $db->prepare('INSERT INTO users (email, password_hash) VALUES (?,?)');
+                    $stmt->execute([$email, password_hash($password, PASSWORD_DEFAULT)]);
+                    $userId = (int) $db->lastInsertId();
+                    $db->prepare('INSERT INTO profiles (user_id, display_name, free_fire_uid) VALUES (?,?,?)')
+                        ->execute([$userId, $displayName, $uid === '' ? null : $uid]);
+                    $db->prepare('INSERT INTO wallet_accounts (user_id) VALUES (?)')->execute([$userId]);
+                    audit_log($userId, 'account.created', 'user', $userId, null, ['role' => 'user']);
+                });
+            } catch (PDOException $e) {
+                $isDuplicateKey = $e->getCode() === '23000' && (int) ($e->errorInfo[1] ?? 0) === 1062;
+                if (!$isDuplicateKey) {
+                    throw $e;
+                }
+                $stmt = $db->prepare('SELECT id FROM users WHERE email=? LIMIT 1');
+                $stmt->execute([$email]);
+                if ($stmt->fetchColumn()) {
+                    throw new DomainException('An account with that email already exists.');
+                }
+                if ($uid !== '') {
+                    $stmt = $db->prepare('SELECT user_id FROM profiles WHERE free_fire_uid=? LIMIT 1');
+                    $stmt->execute([$uid]);
+                    if ($stmt->fetchColumn()) {
+                        throw new DomainException('That Free Fire UID is already linked to another account.');
+                    }
+                }
+                throw $e;
+            }
             $stmt = $db->prepare('SELECT id FROM users WHERE email=?');
             $stmt->execute([$email]);
             session_regenerate_id(true);

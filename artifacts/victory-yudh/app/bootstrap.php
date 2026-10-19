@@ -43,3 +43,4 @@ require_once __DIR__ . '/services/ScoringService.php';
 require_once __DIR__ . '/services/DepositService.php';
 require_once __DIR__ . '/services/TeamService.php';
 require_once __DIR__ . '/services/WithdrawalService.php';
+require_once __DIR__ . '/services/PaymentGateway.php';

@@ -1,6 +1,6 @@
 # Migrations
 
-`schema.sql` is the entry point and imports the numbered migration files. `001_initial.sql` creates the initial tables; `002_scoring_and_prize_rules.sql` adds editable formula multipliers, raw score inputs, and opt-in automatic prize settings; `003_manual_wallet_flows.sql` adds manual deposit requests, withdrawal GST totals, and match notes. The migrations are additive and safe to re-run; migration versions are recorded in `schema_migrations`.
+`schema.sql` is the entry point and imports the numbered migration files. `001_initial.sql` creates the initial tables; `002_scoring_and_prize_rules.sql` adds editable formula multipliers, raw score inputs, and opt-in automatic prize settings; `003_manual_wallet_flows.sql` adds manual deposit requests, withdrawal GST totals, and match notes; `004_user_auth_columns.sql` restores defaultable auth/account metadata columns missing from older `users` tables. The migrations are additive and safe to re-run; migration versions are recorded in `schema_migrations`.
 
 Future schema changes should be numbered, additive migrations and recorded in `schema_migrations` in the same migration file. Apply them deliberately after a backup; do not edit an already-deployed migration to remove or rewrite user data.
 

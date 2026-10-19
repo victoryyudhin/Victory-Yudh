@@ -112,6 +112,13 @@ run_case('MariaDB migration creates core tables and records its version', functi
     }
     check((string) $db->query('SELECT version FROM schema_migrations WHERE version=\'001_initial\'')->fetchColumn() === '001_initial', 'Initial migration version missing.');
     check((string) $db->query('SELECT version FROM schema_migrations WHERE version=\'002_scoring_and_prize_rules\'')->fetchColumn() === '002_scoring_and_prize_rules', 'Scoring and prize migration version missing.');
+    check((string) $db->query('SELECT version FROM schema_migrations WHERE version=\'004_user_auth_columns\'')->fetchColumn() === '004_user_auth_columns', 'User auth column migration version missing.');
+    $userColumns = $db->query(
+        'SELECT column_name FROM information_schema.columns WHERE table_schema=DATABASE() AND table_name=\'users\''
+    )->fetchAll(PDO::FETCH_COLUMN);
+    foreach (['id', 'email', 'password_hash', 'role', 'status', 'email_verified_at', 'last_login_at', 'created_at', 'updated_at'] as $column) {
+        check(in_array($column, $userColumns, true), 'Missing required users column ' . $column);
+    }
 });
 
 run_case('authentication uses password hashes and verifies correct/incorrect passwords', function () use ($db, $context): void {

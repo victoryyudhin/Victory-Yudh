@@ -41,6 +41,47 @@ status="$(curl --silent --show-error --output "$PAGE" --cookie "$COOKIE_JAR" --c
 status="$(curl --silent --show-error --output "$PAGE" --cookie "$COOKIE_JAR" --write-out '%{http_code}' "$BASE_URL/index.php?page=dashboard")"
 [[ "$status" == "200" ]] || fail "authenticated dashboard returned HTTP $status"
 grep -q 'Player dashboard' "$PAGE" || fail "registered player dashboard did not render"
+if ! TEST_REGISTERED_EMAIL="$EMAIL" php -r '
+  require "app/config.php";
+  require "app/db.php";
+  $db = Database::connection();
+  $stmt = $db->prepare(
+    "SELECT u.id, u.role, u.status, u.password_hash, p.display_name, p.free_fire_uid, w.user_id AS wallet_user_id
+     FROM users u
+     JOIN profiles p ON p.user_id=u.id
+     LEFT JOIN wallet_accounts w ON w.user_id=u.id
+     WHERE u.email=?"
+  );
+  $stmt->execute([getenv("TEST_REGISTERED_EMAIL")]);
+  $account = $stmt->fetch();
+  if (!$account || $account["role"] !== "user" || $account["status"] !== "active"
+      || strlen((string) $account["password_hash"]) < 50
+      || $account["display_name"] !== "HTTP Smoke Player"
+      || $account["free_fire_uid"] !== null
+      || (int) $account["wallet_user_id"] !== (int) $account["id"]) {
+      fwrite(STDERR, "Registered account, profile, or wallet data was incomplete.\n");
+      exit(1);
+  }
+'; then
+  fail "registration POST did not persist complete account data"
+fi
+
+DUPLICATE_COOKIE_JAR="$TEMP_DIR/duplicate-cookies.txt"
+status="$(curl --silent --show-error --output "$PAGE" --cookie-jar "$DUPLICATE_COOKIE_JAR" --write-out '%{http_code}' "$BASE_URL/index.php?page=register")"
+[[ "$status" == "200" ]] || fail "duplicate-account register page returned HTTP $status"
+csrf="$(get_csrf)"
+status="$(curl --silent --show-error --output "$PAGE" --cookie "$DUPLICATE_COOKIE_JAR" --cookie-jar "$DUPLICATE_COOKIE_JAR" --write-out '%{http_code}' \
+  --request POST "$BASE_URL/index.php?action=register" \
+  --data-urlencode "_csrf=$csrf" \
+  --data-urlencode "display_name=Duplicate Smoke Player" \
+  --data-urlencode "email=$EMAIL" \
+  --data-urlencode 'free_fire_uid=' \
+  --data-urlencode "password=$PASSWORD" \
+  --data-urlencode "password_confirm=$PASSWORD")"
+[[ "$status" == "303" ]] || fail "duplicate registration returned HTTP $status"
+status="$(curl --silent --show-error --output "$PAGE" --cookie "$DUPLICATE_COOKIE_JAR" --write-out '%{http_code}' "$BASE_URL/index.php?page=register")"
+[[ "$status" == "200" ]] || fail "duplicate registration result page returned HTTP $status"
+grep -q 'An account with that email already exists' "$PAGE" || fail "duplicate registration did not show a clear account-conflict message"
 
 status="$(curl --silent --show-error --output "$PAGE" --cookie "$COOKIE_JAR" --write-out '%{http_code}' "$BASE_URL/index.php?page=admin")"
 [[ "$status" == "403" ]] || fail "non-admin dashboard returned HTTP $status instead of 403"
