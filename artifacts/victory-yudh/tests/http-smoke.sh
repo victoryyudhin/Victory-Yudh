@@ -44,7 +44,7 @@ grep -q 'Player dashboard' "$PAGE" || fail "registered player dashboard did not 
 status="$(curl --silent --show-error --output "$PAGE" --cookie "$COOKIE_JAR" --write-out '%{http_code}' "$BASE_URL/index.php?page=wallet")"
 [[ "$status" == "200" ]] || fail "player wallet returned HTTP $status"
 grep -q 'api.qrserver.com' "$PAGE" || fail "manual deposit QR code did not render"
-grep -q '787744284@fam' "$PAGE" || fail "manual deposit UPI ID did not render"
+grep -q '7877442284@fam' "$PAGE" || fail "manual deposit UPI ID did not render"
 grep -q 'name="utr_number"' "$PAGE" || fail "manual deposit transaction reference field is missing"
 grep -q 'Note: 18% GST will be deducted from each withdrawal amount.' "$PAGE" || fail "withdrawal GST notice is missing"
 grep -q 'name="upi_id"' "$PAGE" || fail "manual withdrawal UPI ID field is missing"

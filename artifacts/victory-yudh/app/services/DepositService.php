@@ -3,8 +3,8 @@ declare(strict_types=1);
 
 final class DepositService
 {
-    public const UPI_ID = '787744284@fam';
-    public const QR_IMAGE_URL = 'https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=upi://pay?pa=787744284@fam%26pn=Niyant';
+    public const UPI_ID = '7877442284@fam';
+    public const QR_IMAGE_URL = 'https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=upi://pay?pa=7877442284@fam%26pn=Niyant';
 
     public static function request(int $userId, int $amountMinor, string $utr, string $idempotencyNonce): int
     {

@@ -169,9 +169,9 @@ run_case('wallet uses integer minor units and idempotent immutable ledger entrie
 
 run_case('manual deposit verification requires a unique UTR and credits only after approval', function () use ($db, $context): void {
     $userId = $context['deposit'];
-    check(DepositService::UPI_ID === '787744284@fam', 'The manual deposit UPI ID changed.');
+    check(DepositService::UPI_ID === '7877442284@fam', 'The manual deposit UPI ID changed.');
     check(
-        DepositService::QR_IMAGE_URL === 'https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=upi://pay?pa=787744284@fam%26pn=Niyant',
+        DepositService::QR_IMAGE_URL === 'https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=upi://pay?pa=7877442284@fam%26pn=Niyant',
         'The manual deposit QR code URL changed.'
     );
 
