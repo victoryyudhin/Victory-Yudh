@@ -52,10 +52,12 @@ final class WalletService
         if ($existing) {
             if ((int) $existing['user_id'] !== $userId
                 || $existing['transaction_type'] !== $type
-                || (int) $existing['amount_minor'] !== $amountMinor) {
+                || (int) $existing['amount_minor'] !== $amountMinor
+                || (int) $existing['available_delta_minor'] !== $availableDelta
+                || (int) $existing['reserved_delta_minor'] !== $reservedDelta) {
                 throw new DomainException('This wallet transaction key was already used for a different transaction.');
             }
-            return $existing;
+            return $existing + ['_duplicate' => true];
         }
 
         $stmt = $db->prepare('INSERT IGNORE INTO wallet_accounts (user_id) VALUES (?)');
@@ -74,10 +76,12 @@ final class WalletService
         if ($existing) {
             if ((int) $existing['user_id'] !== $userId
                 || $existing['transaction_type'] !== $type
-                || (int) $existing['amount_minor'] !== $amountMinor) {
+                || (int) $existing['amount_minor'] !== $amountMinor
+                || (int) $existing['available_delta_minor'] !== $availableDelta
+                || (int) $existing['reserved_delta_minor'] !== $reservedDelta) {
                 throw new DomainException('This wallet transaction key was already used for a different transaction.');
             }
-            return $existing;
+            return $existing + ['_duplicate' => true];
         }
 
         $availableBefore = (int) $account['balance_minor'];
@@ -117,6 +121,7 @@ final class WalletService
             'available_after_minor' => $availableAfter,
             'reserved_after_minor' => $reservedAfter,
             'idempotency_key' => $idempotencyKey,
+            '_duplicate' => false,
         ];
     }
 

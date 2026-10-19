@@ -16,12 +16,12 @@ Mobile-first Free Fire tournament platform with a PHP/MariaDB application, playe
 - App: PHP 8.1+, HTML5, Tailwind CSS, vanilla JavaScript, PDO
 - Database: MariaDB/MySQL with InnoDB transactions
 - Build tool only: pnpm + Tailwind CSS CLI
-- Payments: server-side Razorpay Orders, signature checks, and signed webhooks; no fake capture
+- Deposits and withdrawals: manual UPI requests reviewed by administrators; wallet changes are recorded in the ledger
 
 ## Where things live
 
 - `artifacts/victory-yudh/app/` — HTTP actions, database setup, session/security helpers, and domain services.
-- `artifacts/victory-yudh/public/` — web document root, router, PWA files, static assets, uploads, health check, and Razorpay webhook.
+- `artifacts/victory-yudh/public/` — web document root, router, PWA files, static assets, uploads, and health check.
 - `artifacts/victory-yudh/views/` — public and admin server-rendered pages and shared layout.
 - `artifacts/victory-yudh/schema.sql` / `migrations/` — additive database schema.
 - `artifacts/victory-yudh/tests/` — isolated integration tests.

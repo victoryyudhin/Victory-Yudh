@@ -41,5 +41,6 @@ require_once __DIR__ . '/services/WalletService.php';
 require_once __DIR__ . '/services/TournamentService.php';
 require_once __DIR__ . '/services/ScoringService.php';
 require_once __DIR__ . '/services/DepositService.php';
+require_once __DIR__ . '/services/AdminWalletService.php';
 require_once __DIR__ . '/services/TeamService.php';
 require_once __DIR__ . '/services/WithdrawalService.php';

@@ -41,6 +41,13 @@ status="$(curl --silent --show-error --output "$PAGE" --cookie "$COOKIE_JAR" --c
 status="$(curl --silent --show-error --output "$PAGE" --cookie "$COOKIE_JAR" --write-out '%{http_code}' "$BASE_URL/index.php?page=dashboard")"
 [[ "$status" == "200" ]] || fail "authenticated dashboard returned HTTP $status"
 grep -q 'Player dashboard' "$PAGE" || fail "registered player dashboard did not render"
+status="$(curl --silent --show-error --output "$PAGE" --cookie "$COOKIE_JAR" --write-out '%{http_code}' "$BASE_URL/index.php?page=wallet")"
+[[ "$status" == "200" ]] || fail "player wallet returned HTTP $status"
+grep -q 'api.qrserver.com' "$PAGE" || fail "manual deposit QR code did not render"
+grep -q '787744284@fam' "$PAGE" || fail "manual deposit UPI ID did not render"
+grep -q 'name="utr_number"' "$PAGE" || fail "manual deposit transaction reference field is missing"
+grep -q 'Note: 18% GST will be deducted from each withdrawal amount.' "$PAGE" || fail "withdrawal GST notice is missing"
+grep -q 'name="upi_id"' "$PAGE" || fail "manual withdrawal UPI ID field is missing"
 if ! TEST_REGISTERED_EMAIL="$EMAIL" php -r '
   require "app/config.php";
   require "app/db.php";
@@ -125,5 +132,34 @@ for route in admin admin-tournaments admin-tournament-edit admin-room admin-resu
   status="$(curl --silent --show-error --output "$PAGE" --cookie "$ADMIN_COOKIE_JAR" --write-out '%{http_code}' "$BASE_URL/index.php?page=$route$suffix")"
   [[ "$status" == "200" ]] || fail "admin route $route returned HTTP $status"
 done
+curl --silent --show-error --output "$PAGE" --cookie "$ADMIN_COOKIE_JAR" "$BASE_URL/index.php?page=admin-wallet"
+grep -q 'Add or deduct funds' "$PAGE" || fail "admin wallet adjustment controls did not render"
+grep -q 'Deposit requests' "$PAGE" || fail "admin manual deposit review queue did not render"
+curl --silent --show-error --output "$PAGE" --cookie "$ADMIN_COOKIE_JAR" "$BASE_URL/index.php?page=admin-withdrawals"
+grep -q 'Transfer amount' "$PAGE" || fail "admin withdrawal net transfer amount did not render"
+curl --silent --show-error --output "$PAGE" --cookie "$ADMIN_COOKIE_JAR" "$BASE_URL/index.php?page=admin-notifications"
+grep -q 'Send to All Users' "$PAGE" || fail "send-to-all notification option did not render"
+grep -q 'Search & select specific users' "$PAGE" || fail "specific-user notification option did not render"
+curl --silent --show-error --output "$PAGE" --cookie "$ADMIN_COOKIE_JAR" "$BASE_URL/index.php?page=admin-results"
+grep -q 'Match Note' "$PAGE" || fail "admin match note input did not render"
+grep -q 'Username:' "$PAGE" || fail "joined player usernames and IGNs did not render"
 
-echo "PASS - HTTP player auth, admin auth, protected dashboard/pages, CRUD screens, and CSRF rejection"
+SCORE_TOURNAMENT_ID="$(php -r '
+  require "app/config.php";
+  require "app/db.php";
+  echo (int) Database::connection()->query("SELECT id FROM tournaments WHERE slug LIKE \"test-score-%\" ORDER BY id DESC LIMIT 1")->fetchColumn();
+')"
+status="$(curl --silent --show-error --output "$PAGE" --write-out '%{http_code}' "$BASE_URL/index.php?page=leaderboard&id=$SCORE_TOURNAMENT_ID")"
+[[ "$status" == "200" ]] || fail "published match results returned HTTP $status"
+grep -q 'Room opens ten minutes before match time.' "$PAGE" || fail "published custom match note did not render"
+
+BULK_TOURNAMENT_ID="$(php -r '
+  require "app/config.php";
+  require "app/db.php";
+  echo (int) Database::connection()->query("SELECT id FROM tournaments WHERE slug LIKE \"test-bulk-payout-%\" ORDER BY id DESC LIMIT 1")->fetchColumn();
+')"
+status="$(curl --silent --show-error --output "$PAGE" --write-out '%{http_code}' "$BASE_URL/index.php?page=leaderboard&id=$BULK_TOURNAMENT_ID")"
+[[ "$status" == "200" ]] || fail "published results without a match note returned HTTP $status"
+if grep -q 'Match notes' "$PAGE"; then fail "empty match note container should be hidden"; fi
+
+echo "PASS - HTTP player wallet/deposit/withdrawal UI, admin wallet/withdrawal/notification/results UI, published match notes, auth, protected pages, CRUD screens, and CSRF rejection"

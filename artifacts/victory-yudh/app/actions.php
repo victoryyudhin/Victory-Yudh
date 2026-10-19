@@ -790,51 +790,21 @@ function handle_post_action(): never
             $amount = money_minor(post_string('amount_rupees', 20, true));
             $reason = post_string('reason', 255, true);
             $nonce = post_string('adjustment_nonce', 32, true);
-            if (!in_array($direction, ['credit', 'debit'], true) || $amount < 1 ||
-                !preg_match('/^[a-f0-9]{32}$/', $nonce)) {
-                throw new InvalidArgumentException('Choose a valid credit or debit amount.');
-            }
-            $key = 'admin-wallet-adjust:' . $admin['id'] . ':' . $nonce;
-            WalletService::atomic($db, function (PDO $db) use (
-                $admin, $userId, $direction, $amount, $reason, $key
-            ): void {
-                $stmt = $db->prepare('SELECT email, status FROM users WHERE id=? FOR UPDATE');
-                $stmt->execute([$userId]);
-                $target = $stmt->fetch();
-                if (!$target) {
-                    throw new DomainException('Wallet account not found.');
-                }
-                $delta = $direction === 'credit' ? $amount : -$amount;
-                WalletService::post(
-                    $db,
-                    $userId,
-                    'admin_adjustment',
-                    $amount,
-                    $delta,
-                    0,
-                    $key,
-                    'admin_adjustment',
-                    $userId,
-                    mb_substr($reason, 0, 255)
-                );
-                notify_user(
-                    $userId,
-                    'wallet',
-                    $direction === 'credit' ? 'Wallet credited by admin' : 'Wallet debit recorded',
-                    format_money($amount) . ' was ' . ($direction === 'credit' ? 'added to' : 'deducted from') .
-                        ' your wallet. Reason: ' . mb_substr($reason, 0, 300),
-                    'index.php?page=wallet'
-                );
-                audit_log((int) $admin['id'], 'wallet.admin_adjusted', 'user', $userId, null, [
-                    'direction' => $direction,
-                    'amount_minor' => $amount,
-                    'available_delta_minor' => $delta,
-                    'reason' => $reason,
-                    'account_status' => $target['status'],
-                ]);
-            });
+            $posted = AdminWalletService::adjust(
+                (int) $admin['id'],
+                $userId,
+                $direction,
+                $amount,
+                $reason,
+                $nonce
+            );
             $_SESSION['_wallet_adjustment_nonce'] = bin2hex(random_bytes(16));
-            flash('success', 'Wallet ' . ($direction === 'credit' ? 'credit' : 'debit') . ' posted to the ledger.');
+            flash(
+                'success',
+                $posted
+                    ? 'Wallet ' . ($direction === 'credit' ? 'credit' : 'debit') . ' posted to the ledger.'
+                    : 'This wallet adjustment was already applied; no duplicate was posted.'
+            );
             redirect('index.php?page=admin-wallet');
         }
         case 'admin-notification-send': {

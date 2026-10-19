@@ -99,16 +99,21 @@ $context['squad_member_3'] = create_fixture_user('squad-member-3');
 $context['score_a'] = create_fixture_user('score-a');
 $context['score_b'] = create_fixture_user('score-b');
 $context['refunder'] = create_fixture_user('refunder');
-$context['payment'] = create_fixture_user('payment');
+$context['wallet'] = create_fixture_user('wallet');
+$context['deposit'] = create_fixture_user('deposit');
+$context['adjustment'] = create_fixture_user('adjustment');
 $context['withdrawal'] = create_fixture_user('withdrawal');
 
 run_case('MariaDB migration creates core tables and records its version', function () use ($db): void {
     $tables = $db->query('SELECT table_name FROM information_schema.tables WHERE table_schema=DATABASE()')->fetchAll(PDO::FETCH_COLUMN);
     foreach (['schema_migrations','users','profiles','teams','team_members','team_invitations','tournaments',
         'scoring_rules','registrations','registration_members','matches','results','wallet_accounts',
-        'wallet_transactions','payment_orders','payment_webhook_events','payment_refunds','withdrawal_requests',
+        'wallet_transactions','withdrawal_requests',
         'notifications','announcements','settings','audit_logs','rate_limits','support_requests'] as $table) {
         check(in_array($table, $tables, true), 'Missing table ' . $table);
+    }
+    foreach (['payment_orders','payment_webhook_events','payment_refunds'] as $retiredTable) {
+        check(!in_array($retiredTable, $tables, true), 'Retired billing table was created: ' . $retiredTable);
     }
     check((string) $db->query('SELECT version FROM schema_migrations WHERE version=\'001_initial\'')->fetchColumn() === '001_initial', 'Initial migration version missing.');
     check((string) $db->query('SELECT version FROM schema_migrations WHERE version=\'002_scoring_and_prize_rules\'')->fetchColumn() === '002_scoring_and_prize_rules', 'Scoring and prize migration version missing.');
@@ -148,7 +153,7 @@ run_case('mode validation enforces Solo, Duo, and Squad sizes', function (): voi
 });
 
 run_case('wallet uses integer minor units and idempotent immutable ledger entries', function () use ($db, $context): void {
-    $userId = $context['payment'];
+    $userId = $context['wallet'];
     $before = WalletService::balance($userId);
     WalletService::atomic($db, fn(PDO $db) => WalletService::post($db, $userId, 'deposit', 2345, 2345, 0, 'test-wallet-idem', 'test', 1));
     WalletService::atomic($db, fn(PDO $db) => WalletService::post($db, $userId, 'deposit', 2345, 2345, 0, 'test-wallet-idem', 'test', 1));
@@ -160,6 +165,66 @@ run_case('wallet uses integer minor units and idempotent immutable ledger entrie
     expect_exception(DomainException::class, fn() => WalletService::atomic($db, fn(PDO $db) => WalletService::post($db, $userId, 'deposit', 999, 999, 0, 'test-wallet-idem')));
     expect_exception(DomainException::class, fn() => WalletService::atomic($db, fn(PDO $db) => WalletService::post($db, $userId, 'entry_fee', 99999999, -99999999, 0, 'test-insufficient')));
     check(money_minor('25.09') === 2509 && format_money_input(2509) === '25.09', 'Integer money conversion lost paise precision.');
+});
+
+run_case('manual deposit verification requires a unique UTR and credits only after approval', function () use ($db, $context): void {
+    $userId = $context['deposit'];
+    check(DepositService::UPI_ID === '787744284@fam', 'The manual deposit UPI ID changed.');
+    check(
+        DepositService::QR_IMAGE_URL === 'https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=upi://pay?pa=787744284@fam%26pn=Niyant',
+        'The manual deposit QR code URL changed.'
+    );
+
+    $before = (int) WalletService::balance($userId)['balance_minor'];
+    $amount = 25750;
+    $nonce = bin2hex(random_bytes(16));
+    $requestId = DepositService::request($userId, $amount, 'TXN123456789', $nonce);
+    check(DepositService::request($userId, $amount, 'TXN123456789', $nonce) === $requestId, 'Retry created a second manual deposit request.');
+    check((int) WalletService::balance($userId)['balance_minor'] === $before, 'A pending deposit changed the wallet balance.');
+    expect_exception(
+        DomainException::class,
+        fn() => DepositService::request($userId, $amount, 'TXN123456789', bin2hex(random_bytes(16)))
+    );
+
+    DepositService::review($requestId, $context['admin'], 'approved');
+    check((int) WalletService::balance($userId)['balance_minor'] === $before + $amount, 'Approved deposit was not credited exactly once.');
+    expect_exception(DomainException::class, fn() => DepositService::review($requestId, $context['admin'], 'approved'));
+
+    $rejectedId = DepositService::request($userId, 5000, 'TXN987654321', bin2hex(random_bytes(16)));
+    expect_exception(InvalidArgumentException::class, fn() => DepositService::review($rejectedId, $context['admin'], 'rejected'));
+    DepositService::review($rejectedId, $context['admin'], 'rejected', 'UTR could not be verified.');
+    check((int) WalletService::balance($userId)['balance_minor'] === $before + $amount, 'Rejected deposit altered the wallet.');
+    $stmt = $db->prepare('SELECT status FROM deposit_requests WHERE id=?');
+    $stmt->execute([$rejectedId]);
+    check($stmt->fetchColumn() === 'rejected', 'Rejected deposit status was not recorded.');
+});
+
+run_case('admin wallet adjustments support audited credits and debits without duplicate effects', function () use ($db, $context): void {
+    $userId = $context['adjustment'];
+    $before = (int) WalletService::balance($userId)['balance_minor'];
+    $creditNonce = bin2hex(random_bytes(16));
+    check(AdminWalletService::adjust($context['admin'], $userId, 'credit', 12345, 'Manual prize correction', $creditNonce), 'Manual wallet credit did not post.');
+    check(!AdminWalletService::adjust($context['admin'], $userId, 'credit', 12345, 'Manual prize correction', $creditNonce), 'An identical wallet retry was not treated as a duplicate.');
+    check((int) WalletService::balance($userId)['balance_minor'] === $before + 12345, 'Admin credit was applied more than once.');
+    expect_exception(
+        DomainException::class,
+        fn() => AdminWalletService::adjust($context['admin'], $userId, 'debit', 12345, 'Conflicting replay', $creditNonce)
+    );
+
+    $debitNonce = bin2hex(random_bytes(16));
+    check(AdminWalletService::adjust($context['admin'], $userId, 'debit', 2345, 'Correction reversal', $debitNonce), 'Manual wallet debit did not post.');
+    check((int) WalletService::balance($userId)['balance_minor'] === $before + 10000, 'Admin debit produced the wrong balance.');
+    expect_exception(
+        DomainException::class,
+        fn() => AdminWalletService::adjust($context['admin'], $userId, 'debit', 50000000, 'Excess debit', bin2hex(random_bytes(16)))
+    );
+    expect_exception(
+        DomainException::class,
+        fn() => AdminWalletService::adjust($context['admin'], $context['admin'], 'credit', 100, 'Wrong target role', bin2hex(random_bytes(16)))
+    );
+    $stmt = $db->prepare("SELECT COUNT(*) FROM audit_logs WHERE actor_id=? AND entity_type='user' AND entity_id=? AND action='wallet.admin_adjusted'");
+    $stmt->execute([$context['admin'], $userId]);
+    check((int) $stmt->fetchColumn() === 2, 'Wallet adjustment audit records are missing or duplicated.');
 });
 
 run_case('Solo registration works without a team and prevents duplicate joins and overbooking', function () use ($db, $context): void {
@@ -223,10 +288,16 @@ run_case('rank-and-kill formula, multi-match totals, and leaderboard ranking wor
     $context['score_registration_a'] = $registrationA;
     $context['score_registration_b'] = $registrationB;
     ScoringService::saveRules($tournamentId, 2, [1=>12,2=>9,3=>8], ['total_points','total_kills','placement_points','best_rank','registration_time'], $context['admin']);
-    ScoringService::saveResult($tournamentId, 1, $registrationA, 1, 5, 3, 1, $context['admin']);
+    ScoringService::saveResult($tournamentId, 1, $registrationA, 1, 5, 3, 1, $context['admin'], 'Room opens ten minutes before match time.');
     ScoringService::saveResult($tournamentId, 1, $registrationB, 2, 6, 0, 0, $context['admin']);
     ScoringService::saveResult($tournamentId, 2, $registrationA, 2, 1, 0, 0, $context['admin']);
     ScoringService::saveResult($tournamentId, 2, $registrationB, 1, 2, 0, 0, $context['admin']);
+    $noteStmt = Database::connection()->prepare('SELECT note FROM matches WHERE tournament_id=? AND match_number=1');
+    $noteStmt->execute([$tournamentId]);
+    check($noteStmt->fetchColumn() === 'Room opens ten minutes before match time.', 'The optional match note was not saved.');
+    $noteStmt = Database::connection()->prepare('SELECT note FROM matches WHERE tournament_id=? AND match_number=2');
+    $noteStmt->execute([$tournamentId]);
+    check($noteStmt->fetchColumn() === null, 'A blank match note should remain hidden.');
     $stmt = Database::connection()->prepare('SELECT placement_points,kill_points,total_points FROM results WHERE registration_id=? AND match_id=(SELECT id FROM matches WHERE tournament_id=? AND match_number=1)');
     $stmt->execute([$registrationA,$tournamentId]);
     $firstMatch = $stmt->fetch();
@@ -302,64 +373,6 @@ run_case('final result corrections become provisional and recalculation preserve
     check((int)$stmt->fetchColumn() >= 1, 'Correction audit event is missing.');
 });
 
-run_case('Razorpay requires complete credentials and an environment-matched key mode', function (): void {
-    $names = ['APP_ENV', 'RAZORPAY_KEY_ID', 'RAZORPAY_KEY_SECRET', 'RAZORPAY_WEBHOOK_SECRET'];
-    $original = [];
-    foreach ($names as $name) {
-        $original[$name] = getenv($name);
-    }
-    try {
-        putenv('APP_ENV=testing');
-        putenv('RAZORPAY_KEY_ID=rzp_live_guard_test');
-        putenv('RAZORPAY_KEY_SECRET=guard-secret');
-        putenv('RAZORPAY_WEBHOOK_SECRET=guard-webhook-secret');
-        check(!PaymentGateway::isConfigured(), 'Live credentials must not enable a test environment.');
-        expect_exception(DomainException::class, fn() => PaymentGateway::createOrder(1, 100));
-
-        putenv('RAZORPAY_KEY_ID=rzp_test_guard_test');
-        check(PaymentGateway::isConfigured(), 'Complete Razorpay test credentials should enable a test environment.');
-        putenv('RAZORPAY_WEBHOOK_SECRET');
-        check(!PaymentGateway::isConfigured(), 'A missing webhook secret must disable payment operations.');
-        expect_exception(DomainException::class, fn() => PaymentGateway::createOrder(1, 100));
-
-        putenv('RAZORPAY_WEBHOOK_SECRET=guard-webhook-secret');
-        putenv('APP_ENV=production');
-        check(!PaymentGateway::isConfigured(), 'Test credentials must not enable a production environment.');
-        putenv('RAZORPAY_KEY_ID=rzp_live_guard_test');
-        check(PaymentGateway::isConfigured(), 'Complete Razorpay live credentials should enable production mode.');
-    } finally {
-        foreach ($original as $name => $value) {
-            if ($value === false) {
-                putenv($name);
-            } else {
-                putenv($name . '=' . $value);
-            }
-        }
-    }
-});
-
-run_case('signed payment webhook credits once and rejects duplicate events', function () use ($db, $context): void {
-    $userId = $context['payment'];
-    $providerOrder = 'order_test_' . bin2hex(random_bytes(6));
-    $providerPayment = 'pay_test_' . bin2hex(random_bytes(6));
-    $receipt = 'test_' . bin2hex(random_bytes(8));
-    $stmt = $db->prepare(
-        "INSERT INTO payment_orders (user_id,provider_order_id,receipt,amount_minor,currency,status,idempotency_key)
-         VALUES (?,?,?,20000,'INR','created',?)"
-    );
-    $stmt->execute([$userId,$providerOrder,$receipt,'test-payment-idem:' . bin2hex(random_bytes(8))]);
-    $before = (int) WalletService::balance($userId)['balance_minor'];
-    $payload = json_encode(['event'=>'payment.captured','payload'=>['payment'=>['entity'=>[
-        'id'=>$providerPayment,'order_id'=>$providerOrder,'amount'=>20000,'currency'=>'INR','status'=>'captured',
-    ]]]], JSON_THROW_ON_ERROR);
-    $signature = hash_hmac('sha256', $payload, (string) getenv('RAZORPAY_WEBHOOK_SECRET'));
-    $eventId = 'evt_test_' . bin2hex(random_bytes(6));
-    check(PaymentGateway::processWebhook($payload,$signature,$eventId) === 'processed', 'Signed capture webhook was not processed.');
-    check(PaymentGateway::processWebhook($payload,$signature,$eventId) === 'duplicate', 'Duplicate event ID was not ignored.');
-    check((int) WalletService::balance($userId)['balance_minor'] === $before + 20000, 'Webhook credited the wallet more than once.');
-    expect_exception(DomainException::class, fn() => PaymentGateway::processWebhook($payload,'bad-signature','evt_invalid'));
-});
-
 run_case('cancelled tournament refunds the entry fee exactly once', function () use ($db, $context): void {
     $userId = $context['refunder'];
     $tournamentId = create_fixture_tournament($context['admin'], 'test-refund-' . bin2hex(random_bytes(3)), 'solo', 1, 750);
@@ -380,6 +393,10 @@ run_case('withdrawal reservations, rejection release, and confirmed payout refer
     check(WithdrawalService::request($userId, 20000, 'testplayer@upi', $nonce) === $requestId, 'Duplicate withdrawal form created a second request.');
     $reserved = WalletService::balance($userId);
     check((int)$reserved['balance_minor'] === (int)$before['balance_minor'] - 20000 && (int)$reserved['reserved_minor'] === 20000, 'Withdrawal did not reserve funds.');
+    $stmt = $db->prepare('SELECT gst_minor,net_amount_minor FROM withdrawal_requests WHERE id=?');
+    $stmt->execute([$requestId]);
+    $taxBreakdown = $stmt->fetch();
+    check((int)$taxBreakdown['gst_minor'] === 3600 && (int)$taxBreakdown['net_amount_minor'] === 16400, 'Withdrawal GST or net transfer amount was incorrect.');
     [$encrypted, $iv, $tag] = encrypt_private_value('testplayer@upi');
     check(WithdrawalService::revealUpi(['payout_details_enc'=>$encrypted, 'payout_details_iv'=>$iv, 'payout_details_tag'=>$tag]) === 'testplayer@upi', 'Encrypted withdrawal destination was not readable.');
     expect_exception(DomainException::class, fn() => WithdrawalService::review($requestId,$context['admin'],'paid',''));

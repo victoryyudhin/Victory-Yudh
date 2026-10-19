@@ -227,59 +227,6 @@ CREATE TABLE IF NOT EXISTS wallet_transactions (
   CONSTRAINT fk_wallet_transactions_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE RESTRICT
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
-CREATE TABLE IF NOT EXISTS payment_orders (
-  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
-  user_id BIGINT UNSIGNED NOT NULL,
-  provider ENUM('razorpay') NOT NULL DEFAULT 'razorpay',
-  provider_order_id VARCHAR(100) NULL,
-  provider_payment_id VARCHAR(100) NULL,
-  receipt VARCHAR(80) NOT NULL,
-  amount_minor BIGINT UNSIGNED NOT NULL,
-  currency CHAR(3) NOT NULL DEFAULT 'INR',
-  status ENUM('pending','created','authorized','captured','failed','refunded') NOT NULL DEFAULT 'pending',
-  idempotency_key VARCHAR(100) NOT NULL,
-  captured_at DATETIME NULL,
-  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-  UNIQUE KEY uq_payment_provider_order (provider_order_id),
-  UNIQUE KEY uq_payment_provider_payment (provider_payment_id),
-  UNIQUE KEY uq_payment_receipt (receipt),
-  UNIQUE KEY uq_payment_idempotency (idempotency_key),
-  KEY idx_payment_user_status (user_id, status, created_at),
-  CONSTRAINT fk_payment_orders_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE RESTRICT
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
-CREATE TABLE IF NOT EXISTS payment_webhook_events (
-  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
-  provider_event_id VARCHAR(140) NOT NULL,
-  event_type VARCHAR(100) NOT NULL,
-  payload_sha256 CHAR(64) NOT NULL,
-  payment_order_id BIGINT UNSIGNED NULL,
-  status ENUM('received','processed','ignored','failed') NOT NULL DEFAULT 'received',
-  received_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  processed_at DATETIME NULL,
-  UNIQUE KEY uq_payment_webhook_event (provider_event_id),
-  KEY idx_webhook_status_time (status, received_at),
-  CONSTRAINT fk_webhook_payment_order FOREIGN KEY (payment_order_id) REFERENCES payment_orders(id) ON DELETE SET NULL
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
-CREATE TABLE IF NOT EXISTS payment_refunds (
-  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
-  payment_order_id BIGINT UNSIGNED NOT NULL,
-  requested_by BIGINT UNSIGNED NOT NULL,
-  provider_refund_id VARCHAR(100) NULL,
-  amount_minor BIGINT UNSIGNED NOT NULL,
-  status ENUM('pending','processed','failed') NOT NULL DEFAULT 'pending',
-  idempotency_key VARCHAR(120) NOT NULL,
-  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-  UNIQUE KEY uq_refund_idempotency (idempotency_key),
-  UNIQUE KEY uq_provider_refund_id (provider_refund_id),
-  KEY idx_refund_order (payment_order_id, status),
-  CONSTRAINT fk_refunds_order FOREIGN KEY (payment_order_id) REFERENCES payment_orders(id) ON DELETE RESTRICT,
-  CONSTRAINT fk_refunds_requester FOREIGN KEY (requested_by) REFERENCES users(id) ON DELETE RESTRICT
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
 CREATE TABLE IF NOT EXISTS withdrawal_requests (
   id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
   user_id BIGINT UNSIGNED NOT NULL,
