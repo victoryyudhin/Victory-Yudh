@@ -651,10 +651,10 @@ function render_page(): array
                 $depositPage = max(1, (int) ($_GET['deposit_p'] ?? 1));
                 [$depositRequests, $depositTotal, $depositPageCount, $depositPage] = paged_rows(
                     'SELECT dr.*,u.email,p.display_name FROM deposit_requests dr
-                     JOIN users u ON u.id=dr.user_id LEFT JOIN profiles p ON p.user_id=u.id ' .
-                     $depositWhere . ' ORDER BY dr.created_at DESC',
+                     LEFT JOIN users u ON u.id=dr.user_id LEFT JOIN profiles p ON p.user_id=u.id ' .
+                     $depositWhere . ' ORDER BY dr.created_at DESC,dr.id DESC',
                     'SELECT COUNT(*) FROM deposit_requests dr
-                     JOIN users u ON u.id=dr.user_id LEFT JOIN profiles p ON p.user_id=u.id ' . $depositWhere,
+                     LEFT JOIN users u ON u.id=dr.user_id LEFT JOIN profiles p ON p.user_id=u.id ' . $depositWhere,
                     $depositParams, $depositPage, 20
                 );
                 $manualDepositTotals = [

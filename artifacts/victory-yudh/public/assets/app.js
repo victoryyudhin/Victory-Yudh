@@ -4,13 +4,15 @@ document.addEventListener('click', (event) => {
     const menu = document.querySelector('[data-admin-menu]');
     if (menu) menu.classList.toggle('hidden');
   }
-  const confirmTarget = event.target.closest('[data-confirm]');
-  if (confirmTarget && !window.confirm(confirmTarget.dataset.confirm || 'Are you sure?')) {
-    event.preventDefault();
-  }
 });
 
 document.addEventListener('submit', (event) => {
+  const confirmTarget = event.target.closest('[data-confirm]');
+  if (confirmTarget && !window.confirm(confirmTarget.dataset.confirm || 'Are you sure?')) {
+    event.preventDefault();
+    return;
+  }
+
   const form = event.target.closest('[data-bulk-results]');
   if (!form) return;
 

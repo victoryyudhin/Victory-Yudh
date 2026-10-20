@@ -164,6 +164,7 @@ echo "PASS - active player promotion updates admin access while preserving accou
 unset PROMOTION_OLD_PASSWORD PROMOTION_PASSWORD
 
 php tests/run.php
+node tests/admin-confirm.test.js
 
 php -S "127.0.0.1:$PORT" -t public public/router.php >"$TEMP_DIR/php-server.log" 2>&1 &
 SERVER_PID=$!

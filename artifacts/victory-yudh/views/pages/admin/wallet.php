@@ -86,7 +86,7 @@
           <tbody class="divide-y divide-white/[.07]">
             <?php foreach ($depositRequests as $request): ?>
               <tr>
-                <td class="py-4 pr-4"><p class="font-bold"><?= h($request['display_name'] ?: $request['email']) ?></p><p class="mt-1 text-[10px] text-slate-500"><?= h($request['email']) ?> · #<?= h($request['id']) ?></p><p class="mt-1 text-[10px] text-slate-500"><?= h(date('d M Y · g:i A', strtotime((string) $request['created_at'] . ' UTC'))) ?></p></td>
+                <td class="py-4 pr-4"><p class="font-bold"><?= h($request['display_name'] ?: ($request['email'] ?? 'Account #' . $request['user_id'])) ?></p><p class="mt-1 text-[10px] text-slate-500"><?= h($request['email'] ?? 'Account unavailable') ?> · #<?= h($request['id']) ?></p><p class="mt-1 text-[10px] text-slate-500"><?= h(date('d M Y · g:i A', strtotime((string) $request['created_at'] . ' UTC'))) ?></p></td>
                 <td class="py-4 pr-4 font-black"><?= h(format_money((int) $request['amount_minor'])) ?></td>
                 <td class="py-4 pr-4 font-mono text-[10px]"><?= h($request['utr_number']) ?></td>
                 <td class="py-4 pr-4"><span class="badge <?= $request['status']==='approved'?'badge-open':($request['status']==='rejected'?'badge-closed':'badge-soon') ?>"><?= h(ucfirst($request['status'])) ?></span><?php if ($request['review_note']): ?><p class="mt-2 max-w-48 text-[10px] leading-4 text-slate-500"><?= h($request['review_note']) ?></p><?php endif; ?></td>
