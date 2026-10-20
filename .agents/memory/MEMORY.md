@@ -1,2 +1,3 @@
 - [Victory Yudh workflow port](victory-yudh-workflow-port.md) — the PHP preview uses 8099 because 8080 is already occupied by the API workflow.
 - [Victory Yudh dependency install](victory-yudh-dependency-install.md) — install its filtered pnpm package when unrelated workspace dependencies are blocked by the package firewall.
+- [HTTP smoke test quoting](http-test-shell-quoting.md) — bind SQL values in shell-quoted PHP snippets instead of embedding single-quoted literals.

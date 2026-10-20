@@ -179,6 +179,9 @@ status="$(curl --silent --show-error --output "$PAGE" --cookie "$ADMIN_COOKIE_JA
 grep -Fq "$DEPOSIT_UTR" "$PAGE" || fail "newly submitted pending deposit was missing from the admin queue"
 grep -q 'name="decision" value="approved"' "$PAGE" || fail "deposit approval action did not render"
 grep -q 'name="decision" value="rejected"' "$PAGE" || fail "deposit rejection action did not render"
+status="$(curl --silent --show-error --output "$PAGE" --cookie "$ADMIN_COOKIE_JAR" --write-out '%{http_code}' "$BASE_URL/index.php?page=admin-wallet&deposit_status=pending&deposit_q=$DEPOSIT_UTR")"
+[[ "$status" == "200" ]] || fail "deposit UTR search returned HTTP $status"
+grep -Fq "$DEPOSIT_UTR" "$PAGE" || fail "deposit UTR search did not return its matching request"
 DEPOSIT_ID="$(TEST_DEPOSIT_UTR="$DEPOSIT_UTR" php -r '
   require "app/config.php";
   require "app/db.php";
@@ -205,8 +208,8 @@ if ! TEST_DEPOSIT_ID="$DEPOSIT_ID" php -r '
     fwrite(STDERR, "Admin deposit approval was not persisted.\n");
     exit(1);
   }
-  $stmt = $db->prepare("SELECT COUNT(*) FROM wallet_transactions WHERE transaction_type='deposit' AND reference_type='deposit_request' AND reference_id=?");
-  $stmt->execute([(int) getenv("TEST_DEPOSIT_ID")]);
+  $stmt = $db->prepare("SELECT COUNT(*) FROM wallet_transactions WHERE transaction_type=? AND reference_type=? AND reference_id=?");
+  $stmt->execute(["deposit", "deposit_request", (int) getenv("TEST_DEPOSIT_ID")]);
   if ((int) $stmt->fetchColumn() !== 1) {
     fwrite(STDERR, "Approved deposit did not create exactly one wallet credit.\n");
     exit(1);
@@ -258,6 +261,26 @@ grep -Fq "$DEPOSIT_UTR" "$PAGE" || fail "approved deposit was missing from the a
 status="$(curl --silent --show-error --output "$PAGE" --cookie "$ADMIN_COOKIE_JAR" --write-out '%{http_code}' "$BASE_URL/index.php?page=admin-wallet&deposit_status=rejected")"
 [[ "$status" == "200" ]] || fail "rejected deposit filter returned HTTP $status"
 grep -Fq "$REJECT_UTR" "$PAGE" || fail "rejected deposit was missing from the rejected filter"
+status="$(curl --silent --show-error --output "$PAGE" --cookie "$ADMIN_COOKIE_JAR" --write-out '%{http_code}' "$BASE_URL/index.php?page=admin-wallet&deposit_status=all")"
+[[ "$status" == "200" ]] || fail "all-status deposit filter returned HTTP $status"
+grep -Fq "$DEPOSIT_UTR" "$PAGE" || fail "all-status deposit filter omitted an approved request"
+grep -Fq "$REJECT_UTR" "$PAGE" || fail "all-status deposit filter omitted a rejected request"
+
+PAGINATION_TAG="SMOKEPAGE$(date +%s)$RANDOM"
+if ! TEST_REGISTERED_EMAIL="$EMAIL" TEST_PAGINATION_TAG="$PAGINATION_TAG" php -r '
+  require "app/bootstrap.php";
+  $db = Database::connection();
+  $stmt = $db->prepare("SELECT id FROM users WHERE email=?");
+  $stmt->execute([getenv("TEST_REGISTERED_EMAIL")]);
+  $userId = (int) $stmt->fetchColumn();
+  for ($i = 0; $i < 21; $i++) {
+      DepositService::request($userId, 5000, getenv("TEST_PAGINATION_TAG") . sprintf("%02d", $i), bin2hex(random_bytes(16)));
+  }
+'; then fail "could not create pending deposit pagination fixtures"; fi
+status="$(curl --silent --show-error --output "$PAGE" --cookie "$ADMIN_COOKIE_JAR" --write-out '%{http_code}' "$BASE_URL/index.php?page=admin-wallet&deposit_status=pending&deposit_p=2")"
+[[ "$status" == "200" ]] || fail "second pending deposit page returned HTTP $status"
+grep -Fq "${PAGINATION_TAG}00" "$PAGE" || fail "older pending deposit was missing from the second page"
+grep -q 'aria-label="Deposit request pages"' "$PAGE" || fail "pending deposit pagination controls did not render"
 
 status="$(curl --silent --show-error --output "$PAGE" --cookie "$ADMIN_COOKIE_JAR" --write-out '%{http_code}' "$BASE_URL/index.php?page=admin-wallet&wallet_user_q=$EMAIL")"
 [[ "$status" == "200" ]] || fail "wallet adjustment player search returned HTTP $status"
@@ -305,7 +328,11 @@ WITHDRAWAL_ID="$(TEST_REGISTERED_EMAIL="$EMAIL" php -r '
 status="$(curl --silent --show-error --output "$PAGE" --cookie "$ADMIN_COOKIE_JAR" --write-out '%{http_code}' "$BASE_URL/index.php?page=admin-withdrawals&status=pending")"
 [[ "$status" == "200" ]] || fail "pending withdrawal queue returned HTTP $status"
 grep -q 'Reason for rejection' "$PAGE" || fail "withdrawal rejection reason input did not render"
-grep -q 'name="note" maxlength="255" required placeholder="Reason for rejection"' "$PAGE" || fail "withdrawal rejection input is missing its editable form field"
+grep -q 'type="text" name="note" maxlength="255" required autocomplete="off" placeholder="Reason for rejection"' "$PAGE" || fail "withdrawal rejection input is missing its editable text field"
+if grep -q 'name="note"[^>]*\(disabled\|readonly\)' "$PAGE"; then fail "withdrawal rejection reason input must remain editable"; fi
+status="$(curl --silent --show-error --output "$PAGE" --cookie "$ADMIN_COOKIE_JAR" --write-out '%{http_code}' "$BASE_URL/index.php?page=admin-withdrawals&status=pending&q=$EMAIL")"
+[[ "$status" == "200" ]] || fail "withdrawal player search returned HTTP $status"
+grep -Fq "Request #$WITHDRAWAL_ID" "$PAGE" || fail "withdrawal player search did not return its matching request"
 csrf="$(get_csrf)"
 status="$(curl --silent --show-error --output "$PAGE" --cookie "$ADMIN_COOKIE_JAR" --cookie-jar "$ADMIN_COOKIE_JAR" --write-out '%{http_code}' \
   --request POST "$BASE_URL/index.php?action=admin-withdraw-review" \
@@ -325,6 +352,9 @@ if ! TEST_WITHDRAWAL_ID="$WITHDRAWAL_ID" php -r '
     exit(1);
   }
 '; then fail "withdrawal rejection did not persist its reason"; fi
+status="$(curl --silent --show-error --output "$PAGE" --cookie "$ADMIN_COOKIE_JAR" --write-out '%{http_code}' "$BASE_URL/index.php?page=admin-withdrawals&status=rejected")"
+[[ "$status" == "200" ]] || fail "rejected withdrawal filter returned HTTP $status"
+grep -Fq "Request #$WITHDRAWAL_ID" "$PAGE" || fail "rejected withdrawal was missing from its status filter"
 
 if ! TEST_REGISTERED_EMAIL="$EMAIL" php -r '
   require "app/bootstrap.php";
@@ -336,8 +366,8 @@ if ! TEST_REGISTERED_EMAIL="$EMAIL" php -r '
 PAYOUT_WITHDRAWAL_ID="$(TEST_REGISTERED_EMAIL="$EMAIL" php -r '
   require "app/config.php";
   require "app/db.php";
-  $stmt = Database::connection()->prepare("SELECT id FROM withdrawal_requests WHERE user_id=(SELECT id FROM users WHERE email=?) AND status='pending' ORDER BY id DESC LIMIT 1");
-  $stmt->execute([getenv("TEST_REGISTERED_EMAIL")]);
+  $stmt = Database::connection()->prepare("SELECT id FROM withdrawal_requests WHERE user_id=(SELECT id FROM users WHERE email=?) AND status=? ORDER BY id DESC LIMIT 1");
+  $stmt->execute([getenv("TEST_REGISTERED_EMAIL"), "pending"]);
   echo (int) $stmt->fetchColumn();
 ')"
 status="$(curl --silent --show-error --output "$PAGE" --cookie "$ADMIN_COOKIE_JAR" --write-out '%{http_code}' "$BASE_URL/index.php?page=admin-withdrawals&status=pending")"
@@ -362,7 +392,8 @@ status="$(curl --silent --show-error --output "$PAGE" --cookie "$ADMIN_COOKIE_JA
 status="$(curl --silent --show-error --output "$PAGE" --cookie "$ADMIN_COOKIE_JAR" --write-out '%{http_code}' "$BASE_URL/index.php?page=admin-withdrawals&status=processing")"
 [[ "$status" == "200" ]] || fail "processing withdrawal filter returned HTTP $status"
 grep -q 'Confirmed payout reference' "$PAGE" || fail "confirmed payout reference input did not render"
-grep -q 'name="note" maxlength="140" required placeholder="Confirmed payout reference"' "$PAGE" || fail "payout reference input is missing its editable form field"
+grep -q 'type="text" name="note" maxlength="140" required autocomplete="off" placeholder="Confirmed payout reference"' "$PAGE" || fail "payout reference input is missing its editable text field"
+if grep -q 'name="note"[^>]*\(disabled\|readonly\)' "$PAGE"; then fail "payout reference input must remain editable"; fi
 csrf="$(get_csrf)"
 status="$(curl --silent --show-error --output "$PAGE" --cookie "$ADMIN_COOKIE_JAR" --cookie-jar "$ADMIN_COOKIE_JAR" --write-out '%{http_code}' \
   --request POST "$BASE_URL/index.php?action=admin-withdraw-review" \
@@ -382,6 +413,10 @@ if ! TEST_WITHDRAWAL_ID="$PAYOUT_WITHDRAWAL_ID" php -r '
     exit(1);
   }
 '; then fail "confirmed payout reference was not recorded"; fi
+status="$(curl --silent --show-error --output "$PAGE" --cookie "$ADMIN_COOKIE_JAR" --write-out '%{http_code}' "$BASE_URL/index.php?page=admin-withdrawals&status=paid")"
+[[ "$status" == "200" ]] || fail "paid withdrawal filter returned HTTP $status"
+grep -Fq "Request #$PAYOUT_WITHDRAWAL_ID" "$PAGE" || fail "paid withdrawal was missing from its status filter"
+grep -Fq 'SMOKE-PAYOUT-REF-123' "$PAGE" || fail "paid withdrawal reference did not render in the queue"
 
 curl --silent --show-error --output "$PAGE" --cookie "$ADMIN_COOKIE_JAR" "$BASE_URL/index.php?page=admin-withdrawals"
 grep -q 'Transfer amount' "$PAGE" || fail "admin withdrawal net transfer amount did not render"

@@ -53,7 +53,9 @@
               </form>
               <form method="post" action="<?= h(app_url('index.php?action=admin-withdraw-review')) ?>" class="space-y-2" data-confirm="Reject and release the reserved funds to the player's available wallet?">
                 <?= csrf_field() ?><input type="hidden" name="withdrawal_id" value="<?= h($item['id']) ?>"><input type="hidden" name="decision" value="rejected">
-                <input class="form-control !py-2 text-xs" name="note" maxlength="255" required placeholder="Reason for rejection">
+                <label class="block text-[10px] font-bold text-slate-400">Reason for rejection
+                  <input class="form-control !py-2 text-xs" type="text" name="note" maxlength="255" required autocomplete="off" placeholder="Reason for rejection">
+                </label>
                 <button class="w-full rounded-xl border border-rose-300/20 px-3 py-2 text-xs font-black text-rose-200">Reject & return funds</button>
               </form>
             <?php elseif ($item['status'] === 'approved'): ?>
@@ -63,13 +65,17 @@
               </form>
               <form method="post" action="<?= h(app_url('index.php?action=admin-withdraw-review')) ?>" data-confirm="Reject and return reserved funds?">
                 <?= csrf_field() ?><input type="hidden" name="withdrawal_id" value="<?= h($item['id']) ?>"><input type="hidden" name="decision" value="rejected">
-                <input class="form-control !py-2 text-xs" name="note" maxlength="255" required placeholder="Reason for rejection">
+                <label class="block text-[10px] font-bold text-slate-400">Reason for rejection
+                  <input class="form-control !py-2 text-xs" type="text" name="note" maxlength="255" required autocomplete="off" placeholder="Reason for rejection">
+                </label>
                 <button class="mt-2 w-full rounded-xl border border-rose-300/20 px-3 py-2 text-xs font-black text-rose-200">Reject & return funds</button>
               </form>
             <?php elseif ($item['status'] === 'processing'): ?>
               <form method="post" action="<?= h(app_url('index.php?action=admin-withdraw-review')) ?>" class="space-y-2" data-confirm="Only mark paid after the actual payout is confirmed.">
                 <?= csrf_field() ?><input type="hidden" name="withdrawal_id" value="<?= h($item['id']) ?>"><input type="hidden" name="decision" value="paid">
-                <input class="form-control !py-2 text-xs" name="note" maxlength="140" required placeholder="Confirmed payout reference">
+                <label class="block text-[10px] font-bold text-slate-400">Confirmed payout reference
+                  <input class="form-control !py-2 text-xs" type="text" name="note" maxlength="140" required autocomplete="off" placeholder="Confirmed payout reference">
+                </label>
                 <button class="w-full rounded-xl bg-neon-400/10 px-3 py-3 text-xs font-black text-neon-400">Record confirmed as paid</button>
               </form>
             <?php else: ?>
