@@ -168,15 +168,15 @@ grep -q 'Transfer amount' "$PAGE" || fail "admin withdrawal net transfer amount 
 curl --silent --show-error --output "$PAGE" --cookie "$ADMIN_COOKIE_JAR" "$BASE_URL/index.php?page=admin-notifications"
 grep -q 'Send to All Users' "$PAGE" || fail "send-to-all notification option did not render"
 grep -q 'Search & select specific users' "$PAGE" || fail "specific-user notification option did not render"
-curl --silent --show-error --output "$PAGE" --cookie "$ADMIN_COOKIE_JAR" "$BASE_URL/index.php?page=admin-results"
-grep -q 'Match Note' "$PAGE" || fail "admin match note input did not render"
-grep -q 'Username:' "$PAGE" || fail "joined player usernames and IGNs did not render"
-
 SCORE_TOURNAMENT_ID="$(php -r '
   require "app/config.php";
   require "app/db.php";
   echo (int) Database::connection()->query("SELECT id FROM tournaments WHERE slug LIKE \"test-score-%\" ORDER BY id DESC LIMIT 1")->fetchColumn();
 ')"
+curl --silent --show-error --output "$PAGE" --cookie "$ADMIN_COOKIE_JAR" "$BASE_URL/index.php?page=admin-results&id=$SCORE_TOURNAMENT_ID"
+grep -q 'Match Note' "$PAGE" || fail "admin match note input did not render"
+grep -q 'Username:' "$PAGE" || fail "joined player usernames and IGNs did not render"
+
 status="$(curl --silent --show-error --output "$PAGE" --write-out '%{http_code}' "$BASE_URL/index.php?page=leaderboard&id=$SCORE_TOURNAMENT_ID")"
 [[ "$status" == "200" ]] || fail "published match results returned HTTP $status"
 grep -q 'Room opens ten minutes before match time.' "$PAGE" || fail "published custom match note did not render"

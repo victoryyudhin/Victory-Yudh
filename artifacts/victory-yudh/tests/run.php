@@ -420,9 +420,16 @@ run_case('withdrawal reservations, rejection release, and confirmed payout refer
 run_case('PWA and mobile layout contain responsive viewport, navigation, manifest, and PNG icons', function (): void {
     $layout = file_get_contents(dirname(__DIR__) . '/views/layout.php');
     $css = file_get_contents(dirname(__DIR__) . '/src/app.css');
+    $wallet = file_get_contents(dirname(__DIR__) . '/views/pages/wallet.php');
     $manifest = json_decode((string) file_get_contents(dirname(__DIR__) . '/public/manifest.webmanifest'), true, 16, JSON_THROW_ON_ERROR);
     check(str_contains((string)$layout, 'name="viewport"') && str_contains((string)$layout, 'md:hidden'), 'Viewport or mobile bottom navigation is missing.');
     check(str_contains((string)$css, '@media') || str_contains((string)$css, 'md:'), 'Responsive styles are missing.');
+    check(
+        str_contains((string)$wallet, 'aria-label="Wallet transactions"')
+        && str_contains((string)$wallet, 'md:hidden')
+        && str_contains((string)$wallet, 'min-w-0'),
+        'Wallet history is missing its narrow-screen transaction layout or overflow constraints.'
+    );
     foreach ($manifest['icons'] as $icon) {
         check(is_file(dirname(__DIR__) . '/public/' . str_replace('./','',$icon['src'])), 'PWA icon file is missing.');
     }

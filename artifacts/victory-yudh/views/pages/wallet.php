@@ -38,18 +38,101 @@
       <p class="mt-3 text-[10px] leading-5 text-slate-500">A request reserves the amount. An admin arranges the transfer manually; “Paid” is recorded only after payout confirmation.</p>
     </section>
   </div>
-  <div class="mt-5 grid gap-5 xl:grid-cols-[1.25fr_.9fr_.9fr]">
-    <section class="glass-card rounded-2xl p-5"><div class="flex items-center justify-between"><div><p class="text-[10px] font-black uppercase tracking-widest text-violet-300">Immutable records</p><h2 class="mt-1 text-lg font-black">Transactions</h2></div><span class="text-[10px] text-slate-500"><?= h(number_format($transactionCount)) ?> entries</span></div>
-      <?php if (!$transactions): ?><p class="mt-5 rounded-xl border border-dashed border-white/10 p-7 text-center text-xs text-slate-500">Your wallet transactions will appear here.</p><?php else: ?>
-        <div class="table-wrap mt-4"><table class="w-full text-left text-xs"><thead class="text-[10px] uppercase tracking-wider text-slate-500"><tr><th class="pb-3">Transaction</th><th class="pb-3">ID / reference</th><th class="pb-3">Amount</th><th class="pb-3">Available after</th><th class="pb-3">Time</th></tr></thead><tbody class="divide-y divide-white/[.07]"><?php foreach ($transactions as $tx): $positive=(int)$tx['available_delta_minor']>0; ?><tr><td class="py-3 pr-4"><p class="font-bold"><?= h(ucwords(str_replace('_',' ',$tx['transaction_type']))) ?></p><p class="mt-1 text-[10px] text-slate-500"><?= h($tx['note'] ?: ucfirst($tx['status'])) ?></p></td><td class="py-3 pr-4 font-mono text-[10px] text-slate-500">#<?= h($tx['id']) ?><?php if ($tx['reference_id']): ?><span class="block">ref <?= h($tx['reference_type']) ?>:<?= h($tx['reference_id']) ?></span><?php endif; ?></td><td class="py-3 pr-4 font-black <?= $positive ? 'text-neon-400' : 'text-slate-200' ?>"><?= $positive ? '+' : '' ?><?= h(format_money((int)$tx['amount_minor'])) ?></td><td class="py-3 pr-4"><?= h(format_money((int)$tx['available_after_minor'])) ?></td><td class="py-3 text-[10px] text-slate-500"><?= h(date('d M Y · g:i A',strtotime((string)$tx['created_at'].' UTC'))) ?></td></tr><?php endforeach; ?></tbody></table></div>
-        <?php if ($transactionPages>1): ?><nav class="mt-4 flex gap-2" aria-label="Transaction pages"><?php for($n=1;$n<=$transactionPages;$n++): ?><a class="rounded-lg border px-3 py-2 text-xs font-bold <?= $n===$transactionPage?'border-violet-400/50 text-violet-200':'border-white/10 text-slate-400' ?>" href="<?= h(app_url('index.php?page=wallet&p='.$n)) ?>"><?= h($n) ?></a><?php endfor; ?></nav><?php endif; ?>
+  <div class="mt-5 grid min-w-0 gap-5 xl:grid-cols-[minmax(0,1.25fr)_minmax(0,.9fr)_minmax(0,.9fr)]">
+    <section class="glass-card min-w-0 rounded-2xl p-5">
+      <div class="flex min-w-0 items-center justify-between gap-3">
+        <div class="min-w-0"><p class="text-[10px] font-black uppercase tracking-widest text-violet-300">Immutable records</p><h2 class="mt-1 text-lg font-black">Transactions</h2></div>
+        <span class="shrink-0 text-[10px] text-slate-500"><?= h(number_format($transactionCount)) ?> entries</span>
+      </div>
+      <?php if (!$transactions): ?>
+        <p class="mt-5 rounded-xl border border-dashed border-white/10 p-7 text-center text-xs text-slate-500">Your wallet transactions will appear here.</p>
+      <?php else: ?>
+        <div role="list" aria-label="Wallet transactions" class="mt-4 space-y-2 md:hidden">
+          <?php foreach ($transactions as $tx): $positive=(int)$tx['available_delta_minor']>0; ?>
+            <article role="listitem" class="min-w-0 rounded-xl border border-white/[.08] bg-black/10 p-3">
+              <div class="flex min-w-0 items-start justify-between gap-3">
+                <div class="min-w-0 flex-1">
+                  <p class="break-words text-xs font-bold"><?= h(ucwords(str_replace('_',' ',$tx['transaction_type']))) ?></p>
+                  <p class="mt-1 break-words text-[10px] leading-4 text-slate-500"><?= h($tx['note'] ?: ucfirst($tx['status'])) ?></p>
+                </div>
+                <p class="max-w-[45%] shrink-0 break-words text-right text-xs font-black <?= $positive ? 'text-neon-400' : 'text-slate-200' ?>"><?= $positive ? '+' : '' ?><?= h(format_money((int)$tx['amount_minor'])) ?></p>
+              </div>
+              <dl class="mt-3 grid min-w-0 grid-cols-2 gap-x-3 gap-y-1 border-t border-white/[.07] pt-3 text-[10px]">
+                <dt class="text-slate-500">Available after</dt><dd class="min-w-0 break-words text-right"><?= h(format_money((int)$tx['available_after_minor'])) ?></dd>
+                <dt class="text-slate-500">Time</dt><dd class="min-w-0 break-words text-right"><?= h(date('d M Y · g:i A',strtotime((string)$tx['created_at'].' UTC'))) ?></dd>
+                <dt class="text-slate-500">ID / reference</dt>
+                <dd class="min-w-0 break-all text-right font-mono text-slate-400">#<?= h($tx['id']) ?><?php if ($tx['reference_id']): ?><span class="block">ref <?= h($tx['reference_type']) ?>:<?= h($tx['reference_id']) ?></span><?php endif; ?></dd>
+              </dl>
+            </article>
+          <?php endforeach; ?>
+        </div>
+        <div class="table-wrap mt-4 hidden min-w-0 md:block">
+          <table class="w-full text-left text-xs">
+            <thead class="text-[10px] uppercase tracking-wider text-slate-500"><tr><th class="pb-3">Transaction</th><th class="pb-3">ID / reference</th><th class="pb-3">Amount</th><th class="pb-3">Available after</th><th class="pb-3">Time</th></tr></thead>
+            <tbody class="divide-y divide-white/[.07]">
+              <?php foreach ($transactions as $tx): $positive=(int)$tx['available_delta_minor']>0; ?>
+                <tr>
+                  <td class="py-3 pr-4"><p class="break-words font-bold"><?= h(ucwords(str_replace('_',' ',$tx['transaction_type']))) ?></p><p class="mt-1 break-words text-[10px] text-slate-500"><?= h($tx['note'] ?: ucfirst($tx['status'])) ?></p></td>
+                  <td class="break-all py-3 pr-4 font-mono text-[10px] text-slate-500">#<?= h($tx['id']) ?><?php if ($tx['reference_id']): ?><span class="block">ref <?= h($tx['reference_type']) ?>:<?= h($tx['reference_id']) ?></span><?php endif; ?></td>
+                  <td class="whitespace-nowrap py-3 pr-4 font-black <?= $positive ? 'text-neon-400' : 'text-slate-200' ?>"><?= $positive ? '+' : '' ?><?= h(format_money((int)$tx['amount_minor'])) ?></td>
+                  <td class="whitespace-nowrap py-3 pr-4"><?= h(format_money((int)$tx['available_after_minor'])) ?></td>
+                  <td class="whitespace-nowrap py-3 text-[10px] text-slate-500"><?= h(date('d M Y · g:i A',strtotime((string)$tx['created_at'].' UTC'))) ?></td>
+                </tr>
+              <?php endforeach; ?>
+            </tbody>
+          </table>
+        </div>
+        <?php if ($transactionPages>1): ?><nav class="mt-4 flex flex-wrap gap-2" aria-label="Transaction pages"><?php for($n=1;$n<=$transactionPages;$n++): ?><a class="rounded-lg border px-3 py-2 text-xs font-bold <?= $n===$transactionPage?'border-violet-400/50 text-violet-200':'border-white/10 text-slate-400' ?>" href="<?= h(app_url('index.php?page=wallet&p='.$n)) ?>"><?= h($n) ?></a><?php endfor; ?></nav><?php endif; ?>
       <?php endif; ?>
     </section>
-    <section class="glass-card rounded-2xl p-5"><div><p class="text-[10px] font-black uppercase tracking-widest text-violet-300">Manual deposits</p><h2 class="mt-1 text-lg font-black">Deposit request status</h2></div>
-      <?php if (!$depositRequests): ?><p class="mt-5 rounded-xl border border-dashed border-white/10 p-7 text-center text-xs text-slate-500">No deposit requests submitted.</p><?php else: ?><div class="mt-4 space-y-3"><?php foreach ($depositRequests as $request): ?><article class="rounded-xl border border-white/[.08] bg-black/10 p-4"><div class="flex items-start justify-between gap-3"><div><p class="text-sm font-black"><?= h(format_money((int)$request['amount_minor'])) ?></p><p class="mt-1 text-[10px] text-slate-500">UTR <?= h($request['utr_number']) ?></p><p class="mt-1 text-[10px] text-slate-500"><?= h(date('d M Y · g:i A',strtotime((string)$request['created_at'].' UTC'))) ?></p></div><span class="badge <?= $request['status']==='approved'?'badge-open':($request['status']==='rejected'?'badge-closed':'badge-soon') ?>"><?= h(ucfirst($request['status'])) ?></span></div><?php if ($request['review_note']): ?><p class="mt-3 text-[10px] leading-4 text-slate-400"><?= h($request['review_note']) ?></p><?php endif; ?></article><?php endforeach; ?></div><?php endif; ?>
+    <section class="glass-card min-w-0 rounded-2xl p-5">
+      <div><p class="text-[10px] font-black uppercase tracking-widest text-violet-300">Manual deposits</p><h2 class="mt-1 text-lg font-black">Deposit request status</h2></div>
+      <?php if (!$depositRequests): ?>
+        <p class="mt-5 rounded-xl border border-dashed border-white/10 p-7 text-center text-xs text-slate-500">No deposit requests submitted.</p>
+      <?php else: ?>
+        <div class="mt-4 min-w-0 space-y-3">
+          <?php foreach ($depositRequests as $request): ?>
+            <article class="min-w-0 rounded-xl border border-white/[.08] bg-black/10 p-4">
+              <div class="flex min-w-0 items-start justify-between gap-3">
+                <div class="min-w-0 flex-1">
+                  <p class="text-sm font-black"><?= h(format_money((int)$request['amount_minor'])) ?></p>
+                  <p class="mt-1 break-all text-[10px] leading-4 text-slate-500">UTR <?= h($request['utr_number']) ?></p>
+                  <p class="mt-1 text-[10px] leading-4 text-slate-500"><?= h(date('d M Y · g:i A',strtotime((string)$request['created_at'].' UTC'))) ?></p>
+                </div>
+                <span class="badge shrink-0 whitespace-nowrap <?= $request['status']==='approved'?'badge-open':($request['status']==='rejected'?'badge-closed':'badge-soon') ?>"><?= h(ucfirst($request['status'])) ?></span>
+              </div>
+              <?php if ($request['review_note']): ?><p class="mt-3 break-words text-[10px] leading-4 text-slate-400"><?= h($request['review_note']) ?></p><?php endif; ?>
+            </article>
+          <?php endforeach; ?>
+        </div>
+      <?php endif; ?>
     </section>
-    <section class="glass-card rounded-2xl p-5"><div><p class="text-[10px] font-black uppercase tracking-widest text-violet-300">Withdrawal requests</p><h2 class="mt-1 text-lg font-black">Payout status</h2></div>
-      <?php if (!$withdrawals): ?><p class="mt-5 rounded-xl border border-dashed border-white/10 p-7 text-center text-xs text-slate-500">No withdrawal requests submitted.</p><?php else: ?><div class="mt-4 space-y-3"><?php foreach ($withdrawals as $request): ?><article class="rounded-xl border border-white/[.08] bg-black/10 p-4"><div class="flex items-start justify-between gap-3"><div><p class="text-sm font-black"><?= h(format_money((int)$request['amount_minor'])) ?></p><p class="mt-1 text-[10px] text-slate-500">Request #<?= h($request['id']) ?> · <?= h(date('d M Y · g:i A',strtotime((string)$request['created_at'].' UTC'))) ?></p></div><span class="badge <?= $request['status']==='paid'?'badge-open':($request['status']==='rejected'?'badge-closed':'badge-soon') ?>"><?= h(ucfirst($request['status'])) ?></span></div><?php if ($request['status']==='paid' && $request['payout_reference']): ?><p class="mt-3 text-[10px] text-slate-400">Payout ref: <span class="font-mono"><?= h($request['payout_reference']) ?></span></p><?php elseif ($request['status']==='rejected'): ?><p class="mt-3 text-[10px] text-slate-400">Reserved funds were returned to your available balance.</p><?php else: ?><p class="mt-3 text-[10px] leading-4 text-slate-500">Funds are reserved. This status is not confirmation of payment.</p><?php endif; ?></article><?php endforeach; ?></div><?php endif; ?>
+    <section class="glass-card min-w-0 rounded-2xl p-5">
+      <div><p class="text-[10px] font-black uppercase tracking-widest text-violet-300">Withdrawal requests</p><h2 class="mt-1 text-lg font-black">Payout status</h2></div>
+      <?php if (!$withdrawals): ?>
+        <p class="mt-5 rounded-xl border border-dashed border-white/10 p-7 text-center text-xs text-slate-500">No withdrawal requests submitted.</p>
+      <?php else: ?>
+        <div class="mt-4 min-w-0 space-y-3">
+          <?php foreach ($withdrawals as $request): ?>
+            <article class="min-w-0 rounded-xl border border-white/[.08] bg-black/10 p-4">
+              <div class="flex min-w-0 items-start justify-between gap-3">
+                <div class="min-w-0 flex-1">
+                  <p class="text-sm font-black"><?= h(format_money((int)$request['amount_minor'])) ?></p>
+                  <p class="mt-1 break-words text-[10px] leading-4 text-slate-500">Request #<?= h($request['id']) ?> · <?= h(date('d M Y · g:i A',strtotime((string)$request['created_at'].' UTC'))) ?></p>
+                </div>
+                <span class="badge shrink-0 whitespace-nowrap <?= $request['status']==='paid'?'badge-open':($request['status']==='rejected'?'badge-closed':'badge-soon') ?>"><?= h(ucfirst($request['status'])) ?></span>
+              </div>
+              <?php if ($request['status']==='paid' && $request['payout_reference']): ?>
+                <p class="mt-3 break-all text-[10px] text-slate-400">Payout ref: <span class="font-mono"><?= h($request['payout_reference']) ?></span></p>
+              <?php elseif ($request['status']==='rejected'): ?>
+                <p class="mt-3 break-words text-[10px] text-slate-400">Reserved funds were returned to your available balance.</p>
+              <?php else: ?>
+                <p class="mt-3 break-words text-[10px] leading-4 text-slate-500">Funds are reserved. This status is not confirmation of payment.</p>
+              <?php endif; ?>
+            </article>
+          <?php endforeach; ?>
+        </div>
+      <?php endif; ?>
     </section>
   </div>
 </main>
