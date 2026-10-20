@@ -103,11 +103,12 @@ function require_auth(): array
 
 function require_admin(): array
 {
-    $user = require_auth();
+    $user = current_user();
     if (!has_admin_role($user)) {
-        http_response_code(403);
-        render_error_page(403, 'You do not have permission to view this page.');
-        exit;
+        if ($user) {
+            flash('error', 'This account does not have administrator access. Sign in with an administrator account.');
+        }
+        redirect('index.php?page=admin-login');
     }
     return $user;
 }

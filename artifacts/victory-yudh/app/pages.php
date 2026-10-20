@@ -148,6 +148,14 @@ function render_page(): array
             $contentFile = 'auth';
             break;
         }
+        case 'admin-login': {
+            if (has_admin_role($current)) {
+                redirect('index.php?page=admin');
+            }
+            $pageTitle = 'Admin sign in';
+            $contentFile = 'admin-login';
+            break;
+        }
         case 'dashboard': {
             $current = require_auth();
             $wallet = WalletService::balance((int) $current['id']);

@@ -7,6 +7,7 @@ function fallback_for_action(string $action): string
     return match ($action) {
         'register' => 'index.php?page=register',
         'login' => 'index.php?page=login',
+        'admin-login' => 'index.php?page=admin-login',
         'profile-save', 'password-change' => 'index.php?page=profile',
         'team-create', 'team-invite', 'invitation-response', 'team-remove' => 'index.php?page=team',
         'withdraw-request', 'deposit-request' => 'index.php?page=wallet',
@@ -228,6 +229,32 @@ function handle_post_action(): never
             unset($_SESSION['_csrf']);
             flash('success', 'Welcome back to the arena.');
             redirect('index.php?page=dashboard');
+        }
+        case 'admin-login': {
+            if (has_admin_role($user)) {
+                redirect('index.php?page=admin');
+            }
+            if (!rate_limit('login', 8, 900)) {
+                throw new DomainException('Too many sign-in attempts. Wait 15 minutes and try again.');
+            }
+            $email = mb_strtolower(post_string('admin_email', 254, true));
+            $password = post_string('admin_password', 256, true);
+            $stmt = $db->prepare('SELECT id, password_hash, role, status FROM users WHERE email=? LIMIT 1');
+            $stmt->execute([$email]);
+            $row = $stmt->fetch();
+            if (!$row || !has_admin_role($row) || !password_verify($password, $row['password_hash'])) {
+                throw new DomainException('Administrator email or password is incorrect.');
+            }
+            if (password_needs_rehash($row['password_hash'], PASSWORD_DEFAULT)) {
+                $db->prepare('UPDATE users SET password_hash=? WHERE id=?')
+                    ->execute([password_hash($password, PASSWORD_DEFAULT), $row['id']]);
+            }
+            $db->prepare('UPDATE users SET last_login_at=NOW() WHERE id=?')->execute([$row['id']]);
+            session_regenerate_id(true);
+            $_SESSION['user_id'] = (int) $row['id'];
+            unset($_SESSION['_csrf']);
+            flash('success', 'Signed in to the admin panel.');
+            redirect('index.php?page=admin');
         }
         case 'logout': {
             if (!$user) {

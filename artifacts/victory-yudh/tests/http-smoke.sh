@@ -8,6 +8,7 @@ COOKIE_JAR="$TEMP_DIR/cookies.txt"
 PAGE="$TEMP_DIR/page.html"
 EMAIL="http-smoke-$(date +%s)-$RANDOM@example.invalid"
 PASSWORD="VictoryYudh-Test-Password-2026"
+ADMIN_EMAIL="$(<"$ADMIN_EMAIL_FILE")"
 
 fail() {
   echo "FAIL - HTTP auth smoke: $1" >&2
@@ -91,8 +92,36 @@ status="$(curl --silent --show-error --output "$PAGE" --cookie "$DUPLICATE_COOKI
 grep -q 'An account with that email already exists' "$PAGE" || fail "duplicate registration did not show a clear account-conflict message"
 
 status="$(curl --silent --show-error --output "$PAGE" --cookie "$COOKIE_JAR" --write-out '%{http_code}' "$BASE_URL/index.php?page=admin")"
-[[ "$status" == "403" ]] || fail "non-admin dashboard returned HTTP $status instead of 403"
-grep -q 'permission' "$PAGE" || fail "forbidden page did not show an access-denied message"
+[[ "$status" == "303" ]] || fail "non-admin dashboard returned HTTP $status instead of redirecting to admin sign-in"
+status="$(curl --silent --show-error --output "$PAGE" --cookie "$COOKIE_JAR" --write-out '%{http_code}' "$BASE_URL/index.php?page=admin-login")"
+[[ "$status" == "200" ]] || fail "admin sign-in page returned HTTP $status"
+grep -q 'Sign in to the admin panel' "$PAGE" || fail "admin sign-in prompt did not render for an active player session"
+grep -q 'name="admin_email"' "$PAGE" || fail "admin email field is missing"
+grep -q 'name="admin_password"' "$PAGE" || fail "admin password field is missing"
+csrf="$(get_csrf)"
+status="$(curl --silent --show-error --output "$PAGE" --cookie "$COOKIE_JAR" --cookie-jar "$COOKIE_JAR" --write-out '%{http_code}' \
+  --request POST "$BASE_URL/index.php?action=admin-login" \
+  --data-urlencode "_csrf=$csrf" \
+  --data-urlencode "admin_email=$EMAIL" \
+  --data-urlencode "admin_password=$PASSWORD")"
+[[ "$status" == "303" ]] || fail "player credentials were not rejected by admin sign-in"
+status="$(curl --silent --show-error --output "$PAGE" --cookie "$COOKIE_JAR" --write-out '%{http_code}' "$BASE_URL/index.php?page=admin-login")"
+[[ "$status" == "200" ]] || fail "admin sign-in page after failed attempt returned HTTP $status"
+grep -q 'Administrator email or password is incorrect' "$PAGE" || fail "admin sign-in did not show a generic invalid-credentials message"
+status="$(curl --silent --show-error --output "$PAGE" --cookie "$COOKIE_JAR" --write-out '%{http_code}' "$BASE_URL/index.php?page=dashboard")"
+[[ "$status" == "200" ]] || fail "failed admin sign-in unexpectedly removed the player session"
+grep -q 'Player dashboard' "$PAGE" || fail "failed admin sign-in changed the player session"
+status="$(curl --silent --show-error --output "$PAGE" --cookie "$COOKIE_JAR" --write-out '%{http_code}' "$BASE_URL/index.php?page=admin-login")"
+csrf="$(get_csrf)"
+status="$(curl --silent --show-error --output "$PAGE" --cookie "$COOKIE_JAR" --cookie-jar "$COOKIE_JAR" --write-out '%{http_code}' \
+  --request POST "$BASE_URL/index.php?action=admin-login" \
+  --data-urlencode "_csrf=$csrf" \
+  --data-urlencode "admin_email=$ADMIN_EMAIL" \
+  --data-urlencode 'admin_password=Fixture-Password-123456')"
+[[ "$status" == "303" ]] || fail "valid admin credentials returned HTTP $status"
+status="$(curl --silent --show-error --output "$PAGE" --cookie "$COOKIE_JAR" --write-out '%{http_code}' "$BASE_URL/index.php?page=admin")"
+[[ "$status" == "200" ]] || fail "admin sign-in did not open the admin dashboard"
+if grep -q 'Sign in to the admin panel' "$PAGE"; then fail "admin session was not switched after successful verification"; fi
 
 status="$(curl --silent --show-error --output "$PAGE" --cookie "$COOKIE_JAR" --cookie-jar "$COOKIE_JAR" --write-out '%{http_code}' "$BASE_URL/index.php?page=dashboard")"
 csrf="$(get_csrf)"
@@ -115,7 +144,6 @@ status="$(curl --silent --show-error --output "$PAGE" --cookie "$COOKIE_JAR" --w
 [[ "$status" == "419" ]] || fail "invalid CSRF token returned HTTP $status instead of 419"
 
 ADMIN_COOKIE_JAR="$TEMP_DIR/admin-cookies.txt"
-ADMIN_EMAIL="$(<"$ADMIN_EMAIL_FILE")"
 status="$(curl --silent --show-error --output "$PAGE" --cookie-jar "$ADMIN_COOKIE_JAR" --write-out '%{http_code}' "$BASE_URL/index.php?page=login")"
 [[ "$status" == "200" ]] || fail "admin login page returned HTTP $status"
 csrf="$(get_csrf)"
