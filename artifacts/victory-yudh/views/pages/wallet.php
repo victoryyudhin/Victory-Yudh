@@ -20,7 +20,7 @@
       </div>
       <form method="post" action="<?= h(app_url('index.php?action=deposit-request')) ?>" class="mt-5 space-y-3">
         <?= csrf_field() ?><input type="hidden" name="deposit_nonce" value="<?= h($depositNonce) ?>">
-        <label class="block text-xs font-bold text-slate-400">Amount paid (INR)<input class="form-control mt-2" type="number" name="amount_rupees" min="1" max="500000" step="0.01" required placeholder="Minimum ₹10"></label>
+        <label class="block text-xs font-bold text-slate-400">Amount paid (INR)<input class="form-control mt-2" type="number" name="amount_rupees" min="10" max="500000" step="0.01" required placeholder="Minimum ₹10"></label>
         <label class="block text-xs font-bold text-slate-400">Transaction ID / UTR number<input class="form-control mt-2" type="text" name="utr_number" minlength="6" maxlength="120" autocomplete="off" required placeholder="Enter the UPI transaction reference"></label>
         <button class="btn-primary w-full rounded-xl px-4 py-3 text-sm font-black">Send deposit request</button>
       </form>
@@ -30,7 +30,7 @@
       <div class="flex items-center gap-3"><span class="grid h-10 w-10 place-items-center rounded-xl bg-neon-400/10 text-neon-400"><i class="fa-solid fa-money-bill-transfer" aria-hidden="true"></i></span><div><h2 class="font-black">Request a withdrawal</h2><p class="text-xs text-slate-500">Payout destination is encrypted at rest.</p></div></div>
       <form method="post" action="<?= h(app_url('index.php?action=withdraw-request')) ?>" class="mt-5 space-y-3">
         <?= csrf_field() ?><input type="hidden" name="withdraw_nonce" value="<?= h($withdrawNonce) ?>">
-        <label class="block text-xs font-bold text-slate-400">Amount in INR<input class="form-control mt-2" type="number" name="amount_rupees" min="100" max="50000" step="0.01" required placeholder="Minimum ₹100"></label>
+        <label class="block text-xs font-bold text-slate-400">Amount in INR<input class="form-control mt-2" type="number" name="amount_rupees" min="50" max="50000" step="0.01" required placeholder="Minimum ₹50"></label>
         <label class="block text-xs font-bold text-slate-400">UPI ID<input class="form-control mt-2" name="upi_id" maxlength="100" autocomplete="off" required placeholder="name@bank"></label>
         <p class="rounded-xl border border-amber-300/20 bg-amber-300/[.08] px-3 py-2.5 text-xs font-semibold leading-5 text-amber-100">Note: 18% GST will be deducted from each withdrawal amount.</p>
         <button class="w-full rounded-xl border border-white/10 bg-white/[.05] px-4 py-3 text-sm font-black hover:border-violet-300/30 hover:bg-violet-500/10">Send Withdrawal Request</button>
