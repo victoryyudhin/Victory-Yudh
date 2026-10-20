@@ -429,7 +429,7 @@ function handle_post_action(): never
                 $admin, $id, $title, $description, $map, $mode, $teamSize, $fee, $prize,
                 $limit, $deadline, $matchTime, $roomRelease, $rules, $status, $placementRules,
                 $pointsPerKill, $placementMultiplier, $bonusMultiplier, $penaltyMultiplier,
-                $autoPrizesEnabled, $rankPrizeJson, $killRewardPerKillMinor,
+                $autoPrizesEnabled, $rankPrizePercentages, $rankPrizeJson, $killRewardPerKillMinor,
                 $tieBreakers, &$bannerPath, &$before
             ): void {
                 if ($id) {

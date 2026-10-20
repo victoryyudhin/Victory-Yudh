@@ -190,4 +190,41 @@ status="$(curl --silent --show-error --output "$PAGE" --write-out '%{http_code}'
 [[ "$status" == "200" ]] || fail "published results without a match note returned HTTP $status"
 if grep -q 'Match notes' "$PAGE"; then fail "empty match note container should be hidden"; fi
 
+status="$(curl --silent --show-error --output "$PAGE" --cookie "$ADMIN_COOKIE_JAR" --write-out '%{http_code}' "$BASE_URL/index.php?page=admin-tournament-edit")"
+[[ "$status" == "200" ]] || fail "new tournament form returned HTTP $status"
+csrf="$(get_csrf)"
+CREATED_TITLE="HTTP Smoke Tournament $RANDOM"
+registration_deadline="$(date -u -d '+1 day' +'%Y-%m-%dT%H:%M')"
+room_release_at="$(date -u -d '+2 days' +'%Y-%m-%dT%H:%M')"
+match_time="$(date -u -d '+3 days' +'%Y-%m-%dT%H:%M')"
+status="$(curl --silent --show-error --output "$PAGE" --cookie "$ADMIN_COOKIE_JAR" --cookie-jar "$ADMIN_COOKIE_JAR" --write-out '%{http_code}' \
+  --request POST "$BASE_URL/index.php?action=admin-tournament-save" \
+  --data-urlencode "_csrf=$csrf" \
+  --data-urlencode "title=$CREATED_TITLE" \
+  --data-urlencode "description=HTTP smoke tournament creation test" \
+  --data-urlencode "map_name=Bermuda" \
+  --data-urlencode "mode=solo" \
+  --data-urlencode "entry_fee=0.00" \
+  --data-urlencode "prize_pool=0.00" \
+  --data-urlencode "participant_limit=10" \
+  --data-urlencode "registration_deadline=$registration_deadline" \
+  --data-urlencode "room_release_at=$room_release_at" \
+  --data-urlencode "match_time=$match_time" \
+  --data-urlencode "rules=HTTP smoke test rules" \
+  --data-urlencode "status=draft" \
+  --data-urlencode $'placement_points=1=12\n2=9' \
+  --data-urlencode "points_per_kill=1" \
+  --data-urlencode "placement_multiplier=1" \
+  --data-urlencode "bonus_multiplier=1" \
+  --data-urlencode "penalty_multiplier=1" \
+  --data-urlencode $'rank_prize_percentages=1=50\n2=30\n3=20' \
+  --data-urlencode "kill_reward_per_kill=0.00" \
+  --data-urlencode "tie_breakers[]=total_points" \
+  --data-urlencode "tie_breakers[]=total_kills")"
+[[ "$status" == "303" ]] || fail "creating a tournament returned HTTP $status"
+if grep -q 'Warning:' "$PAGE"; then fail "tournament creation emitted a PHP warning"; fi
+status="$(curl --silent --show-error --output "$PAGE" --cookie "$ADMIN_COOKIE_JAR" --write-out '%{http_code}' "$BASE_URL/index.php?page=admin-tournaments")"
+[[ "$status" == "200" ]] || fail "tournament list after creation returned HTTP $status"
+grep -Fq "$CREATED_TITLE" "$PAGE" || fail "created tournament did not appear in the admin list"
+
 echo "PASS - HTTP player wallet/deposit/withdrawal UI, admin wallet/withdrawal/notification/results UI, published match notes, auth, protected pages, CRUD screens, and CSRF rejection"
