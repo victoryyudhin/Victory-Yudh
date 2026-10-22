@@ -56,16 +56,27 @@ final class ScoringService
             $before = $stmt->fetchAll();
             $encodedTieBreakers = json_encode($tieBreakers, JSON_THROW_ON_ERROR);
             $db->prepare('UPDATE scoring_rules SET active=0 WHERE tournament_id=?')->execute([$tournamentId]);
-            $upsert = $db->prepare(
-                'INSERT INTO scoring_rules
-                   (tournament_id, placement_rank, placement_points, points_per_kill, placement_multiplier,
-                    bonus_multiplier, penalty_multiplier, active, tie_breakers)
-                 VALUES (?,?,?,?,?,?,?,1,?)
-                 ON DUPLICATE KEY UPDATE placement_points=VALUES(placement_points),
-                   points_per_kill=VALUES(points_per_kill), placement_multiplier=VALUES(placement_multiplier),
-                   bonus_multiplier=VALUES(bonus_multiplier), penalty_multiplier=VALUES(penalty_multiplier),
-                   active=1, tie_breakers=VALUES(tie_breakers)'
-            );
+            $upsertSql = Database::driver() === 'pgsql'
+                ? 'INSERT INTO scoring_rules
+                     (tournament_id, placement_rank, placement_points, points_per_kill, placement_multiplier,
+                      bonus_multiplier, penalty_multiplier, active, tie_breakers)
+                   VALUES (?,?,?,?,?,?,?,1,?)
+                   ON CONFLICT (tournament_id, placement_rank) DO UPDATE SET
+                     placement_points=EXCLUDED.placement_points,
+                     points_per_kill=EXCLUDED.points_per_kill,
+                     placement_multiplier=EXCLUDED.placement_multiplier,
+                     bonus_multiplier=EXCLUDED.bonus_multiplier,
+                     penalty_multiplier=EXCLUDED.penalty_multiplier,
+                     active=1, tie_breakers=EXCLUDED.tie_breakers'
+                : 'INSERT INTO scoring_rules
+                     (tournament_id, placement_rank, placement_points, points_per_kill, placement_multiplier,
+                      bonus_multiplier, penalty_multiplier, active, tie_breakers)
+                   VALUES (?,?,?,?,?,?,?,1,?)
+                   ON DUPLICATE KEY UPDATE placement_points=VALUES(placement_points),
+                     points_per_kill=VALUES(points_per_kill), placement_multiplier=VALUES(placement_multiplier),
+                     bonus_multiplier=VALUES(bonus_multiplier), penalty_multiplier=VALUES(penalty_multiplier),
+                     active=1, tie_breakers=VALUES(tie_breakers)';
+            $upsert = $db->prepare($upsertSql);
             foreach ($placementPoints as $rank => $points) {
                 $upsert->execute([
                     $tournamentId, (int) $rank, $points, $pointsPerKill, $placementMultiplier,
@@ -75,7 +86,8 @@ final class ScoringService
             $db->prepare('UPDATE tournaments SET tie_breakers=? WHERE id=?')->execute([$encodedTieBreakers, $tournamentId]);
             self::recalculateWithinTransaction($db, $tournamentId, $adminId);
             $db->prepare(
-                "UPDATE tournaments SET results_status='provisional', status=IF(status='completed','live',status), results_published_at=NULL
+                "UPDATE tournaments SET results_status='provisional',
+                 status=CASE WHEN status='completed' THEN 'live' ELSE status END, results_published_at=NULL
                  WHERE id=? AND results_status='final'"
             )->execute([$tournamentId]);
             audit_log($adminId, 'scoring.rules_updated', 'tournament', $tournamentId, ['rules' => $before], [
@@ -189,13 +201,25 @@ final class ScoringService
             )) {
                 throw new DomainException('Submit one result row for every confirmed player or team in the match.');
             }
-            $stmt = $db->prepare(
-                'INSERT INTO matches (tournament_id, match_number, status)
-                 VALUES (?,?,\'completed\')
-                 ON DUPLICATE KEY UPDATE id=LAST_INSERT_ID(id), status=\'completed\''
-            );
-            $stmt->execute([$tournamentId, $matchNumber]);
-            $matchId = (int) $db->lastInsertId();
+            if (Database::driver() === 'pgsql') {
+                $stmt = $db->prepare(
+                    "INSERT INTO matches (tournament_id, match_number, status)
+                     VALUES (?,?, 'completed')
+                     ON CONFLICT (tournament_id, match_number)
+                     DO UPDATE SET status='completed'
+                     RETURNING id"
+                );
+                $stmt->execute([$tournamentId, $matchNumber]);
+                $matchId = (int) $stmt->fetchColumn();
+            } else {
+                $stmt = $db->prepare(
+                    'INSERT INTO matches (tournament_id, match_number, status)
+                     VALUES (?,?,\'completed\')
+                     ON DUPLICATE KEY UPDATE id=LAST_INSERT_ID(id), status=\'completed\''
+                );
+                $stmt->execute([$tournamentId, $matchNumber]);
+                $matchId = (int) $db->lastInsertId();
+            }
             if ($matchId < 1) {
                 $stmt = $db->prepare('SELECT id FROM matches WHERE tournament_id=? AND match_number=?');
                 $stmt->execute([$tournamentId, $matchNumber]);
@@ -221,17 +245,27 @@ final class ScoringService
                 'placement_multiplier' => 1, 'bonus_multiplier' => 1, 'penalty_multiplier' => 1,
             ];
             $findBefore = $db->prepare('SELECT * FROM results WHERE match_id=? AND registration_id=? FOR UPDATE');
-            $save = $db->prepare(
-                'INSERT INTO results
-                   (tournament_id, match_id, registration_id, placement_rank, kills, bonus_input, penalty_input,
-                    bonus_points, penalty_points, placement_points, kill_points, total_points, entered_by, updated_by)
-                 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-                 ON DUPLICATE KEY UPDATE placement_rank=VALUES(placement_rank), kills=VALUES(kills),
-                   bonus_input=VALUES(bonus_input), penalty_input=VALUES(penalty_input),
-                   bonus_points=VALUES(bonus_points), penalty_points=VALUES(penalty_points),
-                   placement_points=VALUES(placement_points), kill_points=VALUES(kill_points),
-                   total_points=VALUES(total_points), updated_by=VALUES(updated_by)'
-            );
+            $saveSql = Database::driver() === 'pgsql'
+                ? 'INSERT INTO results
+                     (tournament_id, match_id, registration_id, placement_rank, kills, bonus_input, penalty_input,
+                      bonus_points, penalty_points, placement_points, kill_points, total_points, entered_by, updated_by)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                   ON CONFLICT (match_id, registration_id) DO UPDATE SET
+                     placement_rank=EXCLUDED.placement_rank, kills=EXCLUDED.kills,
+                     bonus_input=EXCLUDED.bonus_input, penalty_input=EXCLUDED.penalty_input,
+                     bonus_points=EXCLUDED.bonus_points, penalty_points=EXCLUDED.penalty_points,
+                     placement_points=EXCLUDED.placement_points, kill_points=EXCLUDED.kill_points,
+                     total_points=EXCLUDED.total_points, updated_by=EXCLUDED.updated_by'
+                : 'INSERT INTO results
+                     (tournament_id, match_id, registration_id, placement_rank, kills, bonus_input, penalty_input,
+                      bonus_points, penalty_points, placement_points, kill_points, total_points, entered_by, updated_by)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                   ON DUPLICATE KEY UPDATE placement_rank=VALUES(placement_rank), kills=VALUES(kills),
+                     bonus_input=VALUES(bonus_input), penalty_input=VALUES(penalty_input),
+                     bonus_points=VALUES(bonus_points), penalty_points=VALUES(penalty_points),
+                     placement_points=VALUES(placement_points), kill_points=VALUES(kill_points),
+                     total_points=VALUES(total_points), updated_by=VALUES(updated_by)';
+            $save = $db->prepare($saveSql);
             $resultIdQuery = $db->prepare('SELECT id FROM results WHERE match_id=? AND registration_id=?');
             $memberQuery = $db->prepare('SELECT user_id FROM registration_members WHERE registration_id=?');
             foreach ($normalized as $registrationId => $row) {

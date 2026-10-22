@@ -237,16 +237,30 @@ function rate_limit(string $scope, int $maxAttempts, int $windowSeconds): bool
     $ip = (string) ($_SERVER['REMOTE_ADDR'] ?? 'unknown');
     $key = hash_hmac('sha256', $scope . '|' . $ip, app_key());
     $window = intdiv(time(), $windowSeconds) * $windowSeconds;
+    $windowStartedAt = gmdate('Y-m-d H:i:s', $window);
     $db = Database::connection();
-    $stmt = $db->prepare(
-        'INSERT INTO rate_limits (scope_key, window_started_at, attempts) VALUES (?,FROM_UNIXTIME(?),1)
-         ON DUPLICATE KEY UPDATE attempts=attempts+1'
-    );
-    $stmt->execute([$key, $window]);
-    $db->prepare('DELETE FROM rate_limits WHERE scope_key=? AND window_started_at<FROM_UNIXTIME(?)')
-        ->execute([$key, $window - $windowSeconds]);
-    $stmt = $db->prepare('SELECT attempts FROM rate_limits WHERE scope_key=? AND window_started_at=FROM_UNIXTIME(?)');
-    $stmt->execute([$key, $window]);
+    if (Database::driver() === 'pgsql') {
+        $stmt = $db->prepare(
+            'INSERT INTO rate_limits (scope_key, window_started_at, attempts) VALUES (?,?,1)
+             ON CONFLICT (scope_key, window_started_at)
+             DO UPDATE SET attempts=rate_limits.attempts+1'
+        );
+        $stmt->execute([$key, $windowStartedAt]);
+        $db->prepare('DELETE FROM rate_limits WHERE scope_key=? AND window_started_at<?')
+            ->execute([$key, gmdate('Y-m-d H:i:s', $window - $windowSeconds)]);
+        $stmt = $db->prepare('SELECT attempts FROM rate_limits WHERE scope_key=? AND window_started_at=?');
+        $stmt->execute([$key, $windowStartedAt]);
+    } else {
+        $stmt = $db->prepare(
+            'INSERT INTO rate_limits (scope_key, window_started_at, attempts) VALUES (?,?,1)
+             ON DUPLICATE KEY UPDATE attempts=attempts+1'
+        );
+        $stmt->execute([$key, $windowStartedAt]);
+        $db->prepare('DELETE FROM rate_limits WHERE scope_key=? AND window_started_at<?')
+            ->execute([$key, gmdate('Y-m-d H:i:s', $window - $windowSeconds)]);
+        $stmt = $db->prepare('SELECT attempts FROM rate_limits WHERE scope_key=? AND window_started_at=?');
+        $stmt->execute([$key, $windowStartedAt]);
+    }
     return (int) $stmt->fetchColumn() <= $maxAttempts;
 }
 

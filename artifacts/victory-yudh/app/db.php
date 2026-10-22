@@ -5,15 +5,20 @@ final class Database
 {
     private static ?PDO $connection = null;
 
+    public static function driver(): string
+    {
+        return strtolower((string) config(
+            'db_driver',
+            getenv('DATABASE_URL') !== false || getenv('PGHOST') !== false ? 'pgsql' : 'mysql'
+        ));
+    }
+
     public static function connection(): PDO
     {
         if (self::$connection instanceof PDO) {
             return self::$connection;
         }
-        $driver = strtolower((string) config(
-            'db_driver',
-            getenv('DATABASE_URL') !== false || getenv('PGHOST') !== false ? 'pgsql' : 'mysql'
-        ));
+        $driver = self::driver();
         if ($driver === 'pgsql') {
             $url = (string) config('database_url', '');
             $host = (string) config('pg_host', '');

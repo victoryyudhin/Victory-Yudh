@@ -21,6 +21,14 @@ mkdir -p var/mysql var/run var/uploads
 chmod 700 var var/mysql var/run var/uploads
 
 export APP_ENV="${APP_ENV:-development}"
+USE_POSTGRES=0
+if [[ "${DB_DRIVER:-}" == "pgsql" || -n "${DATABASE_URL:-}" || -n "${PGHOST:-}" ]]; then
+  USE_POSTGRES=1
+  export DB_DRIVER=pgsql
+else
+  export DB_DRIVER=mysql
+fi
+if [[ "$USE_POSTGRES" == "0" ]]; then
 if [[ -z "${APP_KEY:-}" && -f "$ROOT/.env" ]]; then
   APP_KEY="$(php -r '
     foreach (file($argv[1], FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES) ?: [] as $line) {
@@ -51,8 +59,16 @@ export DB_NAME="${DB_NAME:-victory_yudh}"
 export DB_USER="${DB_USER:-victory_yudh}"
 export DB_PASSWORD="${DB_PASSWORD:-victory_yudh_local_only}"
 export DB_CHARSET="${DB_CHARSET:-utf8mb4}"
+fi
 export UPLOAD_DIR="${UPLOAD_DIR:-$ROOT/var/uploads}"
 export PORT="${PORT:-8099}"
+
+if [[ "$USE_POSTGRES" == "1" ]]; then
+  pnpm --filter @workspace/victory-yudh run css:build
+  chmod 644 "$ROOT/public/assets/app.css"
+  unset INITIAL_ADMIN_EMAIL INITIAL_ADMIN_NAME INITIAL_ADMIN_PASSWORD
+  exec php -S "0.0.0.0:$PORT" -t public public/router.php
+fi
 
 if [ ! -d var/mysql/mysql ]; then
   mariadb-install-db \

@@ -922,7 +922,7 @@ function handle_post_action(): never
             WalletService::atomic($db, function (PDO $db) use ($admin, $title, $body, $published): void {
                 $db->prepare(
                     "INSERT INTO announcements (title, body, status, published_at, created_by)
-                     VALUES (?,?,?,IF(?=1,NOW(),NULL),?)"
+                     VALUES (?,?,?,CASE WHEN ?=1 THEN CURRENT_TIMESTAMP ELSE NULL END,?)"
                 )->execute([$title, $body, $published ? 'published' : 'draft', $published ? 1 : 0, $admin['id']]);
                 $id = (int) $db->lastInsertId();
                 if ($published) {
@@ -950,7 +950,11 @@ function handle_post_action(): never
                     throw new DomainException('Announcement not found.');
                 }
                 $status = $item['status'] === 'published' ? 'archived' : 'published';
-                $db->prepare('UPDATE announcements SET status=?, published_at=IF(?=\'published\',NOW(),published_at) WHERE id=?')
+                $db->prepare(
+                    'UPDATE announcements
+                     SET status=?, published_at=CASE WHEN ?=\'published\' THEN CURRENT_TIMESTAMP ELSE published_at END
+                     WHERE id=?'
+                )
                     ->execute([$status, $status, $id]);
                 if ($status === 'published' && !$item['published_at']) {
                     $stmt = $db->query("SELECT id FROM users WHERE status='active'");
@@ -995,10 +999,13 @@ function handle_post_action(): never
                     'min_withdrawal_minor' => $minimum,
                     'max_withdrawal_minor' => $maximum,
                 ] as $key => $value) {
-                    $stmt = $db->prepare(
-                        'INSERT INTO settings (setting_key, setting_value, updated_by) VALUES (?,?,?)
-                         ON DUPLICATE KEY UPDATE setting_value=VALUES(setting_value), updated_by=VALUES(updated_by)'
-                    );
+                    $settingsSql = Database::driver() === 'pgsql'
+                        ? 'INSERT INTO settings (setting_key, setting_value, updated_by) VALUES (?,?,?)
+                           ON CONFLICT (setting_key) DO UPDATE
+                           SET setting_value=EXCLUDED.setting_value, updated_by=EXCLUDED.updated_by'
+                        : 'INSERT INTO settings (setting_key, setting_value, updated_by) VALUES (?,?,?)
+                           ON DUPLICATE KEY UPDATE setting_value=VALUES(setting_value), updated_by=VALUES(updated_by)';
+                    $stmt = $db->prepare($settingsSql);
                     $stmt->execute([$key, (string) $value, $admin['id']]);
                 }
                 audit_log((int) $admin['id'], 'settings.wallet_configuration_updated', 'settings', null, null, [

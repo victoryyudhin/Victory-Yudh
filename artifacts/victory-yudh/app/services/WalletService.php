@@ -60,7 +60,10 @@ final class WalletService
             return $existing + ['_duplicate' => true];
         }
 
-        $stmt = $db->prepare('INSERT IGNORE INTO wallet_accounts (user_id) VALUES (?)');
+        $insertWallet = Database::driver() === 'pgsql'
+            ? 'INSERT INTO wallet_accounts (user_id) VALUES (?) ON CONFLICT (user_id) DO NOTHING'
+            : 'INSERT IGNORE INTO wallet_accounts (user_id) VALUES (?)';
+        $stmt = $db->prepare($insertWallet);
         $stmt->execute([$userId]);
         $stmt = $db->prepare('SELECT balance_minor, reserved_minor FROM wallet_accounts WHERE user_id=? FOR UPDATE');
         $stmt->execute([$userId]);
