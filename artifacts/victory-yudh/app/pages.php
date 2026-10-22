@@ -41,7 +41,7 @@ function render_page(): array
             if (!in_array($modeFilter, ['all','solo','duo','squad'], true)) {
                 $modeFilter = 'all';
             }
-            $where = "WHERE t.status IN ('open','live','locked') AND t.match_time>=UTC_TIMESTAMP()";
+            $where = "WHERE t.status IN ('open','live','locked') AND t.match_time>=CURRENT_TIMESTAMP";
             $params = [];
             if ($modeFilter !== 'all') {
                 $where .= ' AND t.mode=?';
@@ -49,7 +49,7 @@ function render_page(): array
             }
             $tournaments = query_tournaments($where, $params, 6);
             $stats = [
-                'upcoming' => (int) $db->query("SELECT COUNT(*) FROM tournaments WHERE status IN ('open','locked') AND match_time>=UTC_TIMESTAMP()")->fetchColumn(),
+                'upcoming' => (int) $db->query("SELECT COUNT(*) FROM tournaments WHERE status IN ('open','locked') AND match_time>=CURRENT_TIMESTAMP")->fetchColumn(),
                 'players' => (int) $db->query("SELECT COUNT(*) FROM users WHERE status='active' AND role='user'")->fetchColumn(),
             ];
             $announcements = $db->query(
@@ -261,7 +261,7 @@ function render_page(): array
                 "SELECT ti.id, ti.expires_at, t.name AS team_name, p.display_name AS inviter_name
                  FROM team_invitations ti JOIN teams t ON t.id=ti.team_id
                  JOIN profiles p ON p.user_id=ti.inviter_id
-                 WHERE ti.invitee_id=? AND ti.status='pending' AND ti.expires_at>UTC_TIMESTAMP()
+                 WHERE ti.invitee_id=? AND ti.status='pending' AND ti.expires_at>CURRENT_TIMESTAMP
                  ORDER BY ti.invited_at DESC"
             );
             $stmt->execute([$current['id']]);
@@ -616,7 +616,7 @@ function render_page(): array
                 [$teams, $total, $pageCount, $pageNumber] = paged_rows(
                     'SELECT t.id,t.name,t.captain_id,t.created_at,u.email AS captain_email,p.display_name AS captain_name,
                             (SELECT COUNT(*) FROM team_members tm WHERE tm.team_id=t.id) AS member_count,
-                            (SELECT COUNT(*) FROM team_invitations ti WHERE ti.team_id=t.id AND ti.status=\'pending\' AND ti.expires_at>UTC_TIMESTAMP()) AS pending_invites,
+                            (SELECT COUNT(*) FROM team_invitations ti WHERE ti.team_id=t.id AND ti.status=\'pending\' AND ti.expires_at>CURRENT_TIMESTAMP) AS pending_invites,
                             (SELECT COUNT(*) FROM registrations r JOIN tournaments tr ON tr.id=r.tournament_id
                              WHERE r.team_id=t.id AND r.status=\'confirmed\' AND tr.status IN (\'open\',\'locked\',\'live\')) AS active_entries
                      FROM teams t JOIN users u ON u.id=t.captain_id LEFT JOIN profiles p ON p.user_id=u.id ' . $where . ' ORDER BY t.created_at DESC',

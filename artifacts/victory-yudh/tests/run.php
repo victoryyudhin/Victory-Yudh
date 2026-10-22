@@ -104,8 +104,11 @@ $context['deposit'] = create_fixture_user('deposit');
 $context['adjustment'] = create_fixture_user('adjustment');
 $context['withdrawal'] = create_fixture_user('withdrawal');
 
-run_case('MariaDB migration creates core tables and records its version', function () use ($db): void {
-    $tables = $db->query('SELECT table_name FROM information_schema.tables WHERE table_schema=DATABASE()')->fetchAll(PDO::FETCH_COLUMN);
+run_case('database schema creates core tables and records its migration versions', function () use ($db): void {
+    $tableSql = Database::driver() === 'pgsql'
+        ? 'SELECT table_name FROM information_schema.tables WHERE table_schema=current_schema()'
+        : 'SELECT table_name FROM information_schema.tables WHERE table_schema=DATABASE()';
+    $tables = $db->query($tableSql)->fetchAll(PDO::FETCH_COLUMN);
     foreach (['schema_migrations','users','profiles','teams','team_members','team_invitations','tournaments',
         'scoring_rules','registrations','registration_members','matches','results','wallet_accounts',
         'wallet_transactions','withdrawal_requests',
@@ -118,9 +121,10 @@ run_case('MariaDB migration creates core tables and records its version', functi
     check((string) $db->query('SELECT version FROM schema_migrations WHERE version=\'001_initial\'')->fetchColumn() === '001_initial', 'Initial migration version missing.');
     check((string) $db->query('SELECT version FROM schema_migrations WHERE version=\'002_scoring_and_prize_rules\'')->fetchColumn() === '002_scoring_and_prize_rules', 'Scoring and prize migration version missing.');
     check((string) $db->query('SELECT version FROM schema_migrations WHERE version=\'004_user_auth_columns\'')->fetchColumn() === '004_user_auth_columns', 'User auth column migration version missing.');
-    $userColumns = $db->query(
-        'SELECT column_name FROM information_schema.columns WHERE table_schema=DATABASE() AND table_name=\'users\''
-    )->fetchAll(PDO::FETCH_COLUMN);
+    $columnSql = Database::driver() === 'pgsql'
+        ? 'SELECT column_name FROM information_schema.columns WHERE table_schema=current_schema() AND table_name=\'users\''
+        : 'SELECT column_name FROM information_schema.columns WHERE table_schema=DATABASE() AND table_name=\'users\'';
+    $userColumns = $db->query($columnSql)->fetchAll(PDO::FETCH_COLUMN);
     foreach (['id', 'email', 'password_hash', 'role', 'status', 'email_verified_at', 'last_login_at', 'created_at', 'updated_at'] as $column) {
         check(in_array($column, $userColumns, true), 'Missing required users column ' . $column);
     }

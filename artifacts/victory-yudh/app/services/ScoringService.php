@@ -343,10 +343,10 @@ final class ScoringService
                     sr.bonus_multiplier, sr.penalty_multiplier
              FROM results r
              LEFT JOIN scoring_rules sr ON sr.tournament_id=r.tournament_id
-               AND sr.placement_rank=IF(EXISTS (
+               AND sr.placement_rank=CASE WHEN EXISTS (
                  SELECT 1 FROM scoring_rules sx WHERE sx.tournament_id=r.tournament_id
                    AND sx.placement_rank=r.placement_rank AND sx.active=1
-               ), r.placement_rank, 0) AND sr.active=1
+                ) THEN r.placement_rank ELSE 0 END AND sr.active=1
              WHERE r.tournament_id=? FOR UPDATE'
         );
         $stmt->execute([$tournamentId]);
@@ -522,7 +522,7 @@ final class ScoringService
             throw new LogicException('Calculated tournament payouts exceed the configured prize pool.');
         }
         if ($totalPaid > 0) {
-            $db->prepare('UPDATE tournaments SET payouts_locked_at=UTC_TIMESTAMP() WHERE id=?')
+            $db->prepare('UPDATE tournaments SET payouts_locked_at=CURRENT_TIMESTAMP WHERE id=?')
                 ->execute([$tournamentId]);
         }
         audit_log($adminId, 'tournament.prizes_auto_credited', 'tournament', $tournamentId, null, [
